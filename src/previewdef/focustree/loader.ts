@@ -30,7 +30,7 @@ export class FocusTreeLoader extends ContentLoader<FocusTreeLoaderResult> {
                     if (!sharedFocus) {
                         continue;
                     }
-                    const filePath = findFileByFocusKey(sharedFocus);
+                    const filePath = await findFileByFocusKey(sharedFocus);
                     if (filePath) {
                         if (dependencies.findIndex((item) => item.path === filePath) === -1) {
                             dependencies.push({type: 'focus', path: filePath});

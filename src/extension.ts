@@ -10,7 +10,6 @@ import { registerScanReferencesCommand } from './util/dependency';
 import { registerHoiFs } from './util/hoifs';
 import { loadI18n } from './util/i18n';
 import { registerGfxIndex } from './util/gfxindex';
-import { Logger } from "./util/logger";
 import { registerLocalisationIndex } from "./util/localisationIndex";
 import { registerSharedFocusIndex } from "./util/sharedFocusIndex";
 
@@ -19,9 +18,6 @@ export function activate(context: vscode.ExtensionContext) {
     if (locale === "%hoi4modutilities.locale%") {
         locale = 'en';
     }
-
-    Logger.initialize();
-    Logger.show();
 
     loadI18n(locale);
 
