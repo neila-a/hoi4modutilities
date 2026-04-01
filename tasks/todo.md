@@ -1,24 +1,25 @@
-# HOI4 Mod Utilities Runtime Regression Todo
+# HOI4 Mod Utilities Persistent Runtime Regression Todo
 
 ## Plan
-- [x] Re-check the unresolved localisation highlighting and focus preview button regressions against the current forked manifest/runtime identifiers
-- [x] Restore reliable activation for HOI4/paradox language documents and simplify the preview button visibility rules so supported files surface the command again
-- [x] Bump the extension version so VSIX replacement is unambiguous during reinstall
-- [x] Verify with `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
+- [x] Re-check the still-broken localisation highlighting and focus preview button with emphasis on actual editor language IDs and activation assumptions
+- [x] Compare the fork against upstream/runtime expectations to find which language IDs or menu gates are still excluding valid HOI4 files
+- [x] Implement the smallest robust fix for both preview visibility and localisation highlighting
+- [x] Verify with local build/test/package steps and document the remaining manual validation step
 
 ## Notes
-- The previous runtime-identifier split was necessary for side-by-side installation, but it did not fully resolve the user-visible regression.
-- Focus preview visibility and localisation highlighting both depend on extension activation timing, so language activation events are part of the investigation.
-- Favor a robust preview button over a too-strict toolbar `when` clause if the current condition keeps hiding the command on valid files.
+- The prior `0.13.1` manifest adjustment was not sufficient according to user validation.
+- The next investigation should focus on concrete language IDs and preview gating rather than only extension identity collisions.
+- If the command still disappears, prefer broad but safe visibility plus command-side rejection over fragile menu logic.
 
 ## Review
 - Implemented:
-  - added `onLanguage:hoi4` and `onLanguage:paradox` activation events so the fork still initializes when a companion Paradox syntax extension changes the editor language mode
-  - relaxed the preview command visibility rules in `package.json` so the toolbar and command palette can surface the preview action again on HOI4 script editors instead of depending too tightly on warmed-up runtime contexts
-  - bumped the packaged extension version from `0.13.0` to `0.13.1` and documented the runtime regression fix in `CHANGELOG.md`
-  - added a manifest regression test to keep the extra activation events and preview visibility rule from silently disappearing in future edits
+  - inspected installed companion extensions and confirmed the active Paradox helpers on this machine use `hoi4`/`paradox` language IDs, while the Millennium Dawn fork uses file-extension-based preview visibility
+  - added `onStartupFinished` activation so the fork initializes its preview/highlighting registration even if editor restore misses a language-based activation edge
+  - changed the preview fallback visibility rule to key off `resourceExtname` for `.txt`, `.gfx`, `.gui`, and `.map` files instead of only language IDs
+  - refreshed preview context on visible-editor and open-document changes to reduce stale toolbar state
+  - bumped the package version to `0.13.2` and added manifest regression coverage for the activation/visibility rules
 - Verification:
   - `npm run compile-ts`: passed
   - `npm run lint`: passed
   - `npm test`: passed
-  - `npm run package`: passed and produced `hoi4modutilities-0.13.1.vsix`
+  - `npm run package`: passed and produced `hoi4modutilities-0.13.2.vsix`

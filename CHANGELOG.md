@@ -4,7 +4,13 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.1] - 2026/04/01 - Latest
+## [0.13.2] - 2026/04/01 - Latest
+
+### Fixed
+* Add `onStartupFinished` activation so localisation highlighting and preview context registration still initialize even when language-based activation is missed during editor restore.
+* Switch the preview button fallback visibility to extension-based file matching (`.txt`, `.gfx`, `.gui`, `.map`) so focus preview entry points are not hidden by language-mode differences across companion Paradox extensions.
+
+## [0.13.1] - 2026/04/01
 
 ### Fixed
 * Restore activation on `hoi4` and `paradox` language documents so focus previews and localisation highlighting still initialize when another syntax extension changes the language mode.

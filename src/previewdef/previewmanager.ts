@@ -54,6 +54,8 @@ export class PreviewManager implements vscode.WebviewPanelSerializer {
         disposables.push(vscode.workspace.onDidCloseTextDocument(this.onCloseTextDocument, this));
         disposables.push(vscode.workspace.onDidChangeTextDocument(this.onChangeTextDocument, this));
         disposables.push(vscode.window.onDidChangeActiveTextEditor(this.updateHoi4PreviewContextValue, this));
+        disposables.push(vscode.window.onDidChangeVisibleTextEditors(() => this.updateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
+        disposables.push(vscode.workspace.onDidOpenTextDocument(() => this.updateHoi4PreviewContextValue(vscode.window.activeTextEditor)));
         disposables.push(vscode.window.registerWebviewPanelSerializer(WebviewType.Preview, this));
 
         // Trigger context value setting
