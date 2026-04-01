@@ -4,7 +4,17 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.12.2] - 2024/12/07 - Latest
+## [0.13.0] - 2026/04/01 - Latest
+
+### Added
+* Add fixture-backed parser, dependency-header, and extension smoke coverage with the current VS Code test runner.
+* Add regression coverage for newer HOI4 scoped variable syntax such as array references, scoped variables, and attached values.
+
+### Changed
+* Modernize the development toolchain around local `npm ci`, TypeScript 6, webpack 5, and desktop-only VS Code extension packaging.
+* Limit webview resource roots to extension static assets and remove obsolete web-extension runtime branches.
+
+## [0.12.2] - 2024/12/07
 
 ### Fixed
 * Allow `|` in symbol type (to support the case `localization_key = building_state_modifier|dam`) (#105) (Contributor: [IShiraiKurokoI(Shirai_Kuroko)](https://github.com/IShiraiKurokoI)).

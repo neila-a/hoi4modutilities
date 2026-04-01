@@ -18,5 +18,5 @@
 - `npm run compile-ts`: passed.
 - `npm run lint`: passed with no errors.
 - `npm test`: passed with fixture-backed parser, dependency-header, and event-schema coverage.
-- `npm run package`: passed and produced `hoi4modutilities-0.12.2.vsix`.
+- `npm run package`: passed and produced `hoi4modutilities-0.13.0.vsix`.
 - `npm run test-ui`: blocked in this environment because the VS Code host launch failed with `spawn EPERM` after downloading the stable test binary.
