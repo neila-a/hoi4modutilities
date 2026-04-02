@@ -1,22 +1,17 @@
-# HOI4 Mod Utilities Localisation Highlighting Performance Todo
+# HOI4 Mod Utilities Focus Layout Editor Setting Todo
 
 ## Plan
-- [x] Inspect the localisation highlighting refresh path and identify the hot spots causing delayed recognition
-- [x] Reduce unnecessary rescans/re-decoration work while preserving the existing highlighting behavior
-- [x] Add regression coverage where practical, run verification, and record the result
+- [x] Inspect the existing settings manifest, localized strings, and focus layout editor flag wiring
+- [x] Add a dedicated VS Code settings UI toggle for the focus layout editor while preserving legacy `featureFlags` compatibility
+- [x] Run verification, update task notes, and summarize the user-facing behavior
 
 ## Notes
-- The user reports that localisation highlighting is recognized too slowly.
-- The likely hot path is extension-host decoration refresh rather than localisation parsing correctness.
-- Keep the visible feature set unchanged: same detection rules, same color/token decoration categories.
+- The user wants the focus layout editor to appear in the VS Code extension settings UI.
+- The existing implementation is hidden behind `hoi4ModUtilities.featureFlags` with `focusLayoutEditor`.
+- The safest rollout is additive: introduce a boolean setting and let runtime accept either the new setting or the legacy feature flag.
 
 ## Review
-- The hot path was the extension host refresh loop, not the parser itself: localisation decorations were recomputed from full document text on every eligible refresh, including `onDidChangeTextEditorVisibleRanges` while scrolling.
-- Removed the `visibleRanges`-driven rescan path, narrowed scheduled refreshes to changed documents when possible, and cached localisation analysis by document URI + version.
-- Added an editor-level applied-state check so unchanged documents do not re-send the same decoration arrays after the initial pass or after simple focus changes.
-- Detection still uses the same path/token/text rules, but non-path fallback now samples the leading document lines without materializing the whole file just to decide whether highlighting should run.
-- Verification:
-  - `npm run compile-ts` passed.
-  - `npm run lint` passed.
-  - `npm test` passed.
-  - `npm run package` passed and produced `hoi4modutilities-0.13.7.vsix`.
+- Added `hoi4ModUtilities.focusLayoutEditor` as a dedicated boolean setting so the experimental focus layout editor appears in the VS Code Settings UI.
+- Preserved backward compatibility by letting runtime enable the feature when either the new boolean setting is `true` or the legacy `hoi4ModUtilities.featureFlags` array contains `focusLayoutEditor`.
+- Verified with `npm test` (`compile-ts`, `lint`, and `test:unit`) and confirmed the manifest regression test for the new settings UI entry passes.
+- Previously verified `npm run package`, which produced `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.7.vsix`.

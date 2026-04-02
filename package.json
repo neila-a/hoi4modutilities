@@ -105,6 +105,12 @@
             "type": "array",
             "default": [],
             "description": "%hoi4modutilities.featureFlags.desc%"
+          },
+          "hoi4ModUtilities.focusLayoutEditor": {
+            "title": "%hoi4modutilities.focusLayoutEditor.title%",
+            "type": "boolean",
+            "default": false,
+            "description": "%hoi4modutilities.focusLayoutEditor.desc%"
           }
         }
       }
