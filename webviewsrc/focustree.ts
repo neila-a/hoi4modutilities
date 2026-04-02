@@ -13,10 +13,8 @@ import { Checkbox } from "./util/checkbox";
 import { vscode } from "./util/vscode";
 import {
     FocusLayoutDraft,
-    FocusLayoutFocusDraft,
     FocusLayoutMessage,
     FocusLayoutOffsetDraft,
-    FocusLayoutPointDraft,
 } from "../src/previewdef/focustree/layouteditcommon";
 
 function showBranch(visibility: boolean, optionClass: string) {
@@ -357,7 +355,6 @@ async function buildContent() {
         focusLayoutSelectedKey = undefined;
     }
     renderLayoutSelection();
-    renderLayoutInspector();
     updateLayoutToolbar();
     persistLayoutState();
 }
@@ -479,7 +476,8 @@ function updateLayoutToolbar() {
     const editButton = document.getElementById('focus-layout-edit') as HTMLButtonElement | null;
     const applyButton = document.getElementById('focus-layout-apply') as HTMLButtonElement | null;
     const discardButton = document.getElementById('focus-layout-discard') as HTMLButtonElement | null;
-    if (!editButton || !applyButton || !discardButton) {
+    const status = document.getElementById('focus-layout-status') as HTMLDivElement | null;
+    if (!editButton || !applyButton || !discardButton || !status) {
         return;
     }
 
@@ -488,141 +486,48 @@ function updateLayoutToolbar() {
     applyButton.style.display = focusLayoutEditMode ? '' : 'none';
     discardButton.style.display = focusLayoutEditMode ? '' : 'none';
     applyButton.disabled = !focusLayoutDraft || focusLayoutStale || focusLayoutPendingApplyVersion !== undefined;
-}
-
-function renderLayoutInspector() {
-    if (!focusLayoutEditorEnabled) {
-        return;
-    }
-
-    const inspector = document.getElementById('focus-layout-inspector') as HTMLDivElement | null;
-    const content = document.getElementById('focus-layout-inspector-content') as HTMLDivElement | null;
-    if (!inspector || !content) {
-        return;
-    }
 
     if (!focusLayoutEditMode) {
-        inspector.style.display = 'none';
+        status.style.display = 'none';
+        status.innerHTML = '';
         return;
     }
 
-    inspector.style.display = 'block';
+    status.style.display = 'flex';
+    status.innerHTML = renderLayoutStatus();
+    wireLayoutStatusActions();
+}
+
+function renderLayoutStatus(): string {
     const selected = focusLayoutSelectedKey ? currentLayoutTargets[focusLayoutSelectedKey] : undefined;
-    const staleBanner = focusLayoutStale ? `
-        <div style="padding:8px 10px; margin-bottom:10px; border-radius:6px; background: var(--vscode-inputValidation-warningBackground); border: 1px solid var(--vscode-inputValidation-warningBorder);">
-            <div style="margin-bottom:6px;">${feLocalize('TODO', 'The document changed while this draft was open.')}</div>
-            <button id="focus-layout-reload">${feLocalize('TODO', 'Reload From Document')}</button>
-            <button id="focus-layout-discard-stale" style="margin-left:6px;">${feLocalize('TODO', 'Discard Draft')}</button>
-        </div>` : '';
-    const status = focusLayoutStatusMessage ? `<div style="margin-bottom:10px; color: var(--vscode-descriptionForeground);">${escapeHtml(focusLayoutStatusMessage)}</div>` : '';
+    const badge = selected ? `<span style="padding:2px 8px; border-radius:999px; background:${selected.editable ? 'var(--vscode-badge-background)' : 'rgba(127,127,127,0.25)'}; color: var(--vscode-badge-foreground);">${selected.editable ? feLocalize('TODO', 'Editable') : feLocalize('TODO', 'Read-only')}</span>` : '';
+    const selectionText = selected
+        ? `<span><strong>${escapeHtml(selected.label)}</strong> ${selected.currentPosition.x}, ${selected.currentPosition.y}</span>`
+        : `<span>${feLocalize('TODO', 'Select a focus, continuous focus area, or inlay window, then drag to move it.')}</span>`;
+    const sourceText = selected ? `<span>${escapeHtml(selected.sourceFile)}</span>` : '';
+    const dragText = selected
+        ? `<span>${selected.editable ? feLocalize('TODO', 'Drag to move the selected item.') : feLocalize('TODO', 'This item is read-only in the current file.')}</span>`
+        : `<span>${feLocalize('TODO', 'Position changes are drag-only in this mode.')}</span>`;
+    const openSourceButton = selected?.sourceStart !== undefined
+        ? `<button id="focus-layout-open-source-inline">${feLocalize('TODO', 'Open Source')}</button>`
+        : '';
+    const staleControls = focusLayoutStale
+        ? `
+            <span>${feLocalize('TODO', 'The document changed while this draft was open.')}</span>
+            <button id="focus-layout-reload-inline">${feLocalize('TODO', 'Reload From Document')}</button>
+            <button id="focus-layout-discard-stale-inline">${feLocalize('TODO', 'Discard Draft')}</button>`
+        : '';
+    const message = focusLayoutStatusMessage ? `<span>${escapeHtml(focusLayoutStatusMessage)}</span>` : '';
 
-    if (!selected) {
-        content.innerHTML = `${staleBanner}${status}
-            <h3 style="margin-top:0;">${feLocalize('TODO', 'Focus Layout Editor')}</h3>
-            <p style="margin-bottom:0;">${feLocalize('TODO', 'Select a focus, continuous focus area, or inlay window to edit its layout fields.')}</p>`;
-        wireLayoutInspectorActions();
-        return;
-    }
-
-    if (selected.kind === 'focus') {
-        const focusDraft = focusLayoutDraft?.focuses[selected.key];
-        content.innerHTML = `${staleBanner}${status}${renderFocusLayoutInspector(selected, focusDraft)}`;
-    } else {
-        const pointDraft = (selected.kind === 'continuous'
-            ? focusLayoutDraft?.continuous[selected.key]
-            : focusLayoutDraft?.inlayRefs[selected.key]) as FocusLayoutPointDraft | undefined;
-        content.innerHTML = `${staleBanner}${status}${renderPointLayoutInspector(selected, pointDraft)}`;
-    }
-
-    wireLayoutInspectorActions();
+    return `${badge}${selectionText}${dragText}${sourceText}${openSourceButton}${message}${staleControls}`;
 }
 
-function renderFocusLayoutInspector(selected: LayoutTargetDescriptor, focusDraft: FocusLayoutFocusDraft | undefined): string {
-    const editable = !!focusDraft?.editable && !focusLayoutStale;
-    const activeFocusIds = Object.values(ensureLayoutDraft().focuses)
-        .filter(focus => focus.editable && focus.sourceFile === focusLayoutActiveFile)
-        .map(focus => focus.focusId)
-        .sort((a, b) => a.localeCompare(b));
-    const offsetRows = focusDraft?.offsets.map(offset => `
-        <div data-offset-key="${escapeHtml(offset.editKey)}" style="display:grid; grid-template-columns: 1fr 1fr auto; gap:6px; margin-bottom:8px; align-items:end;">
-            <label style="display:flex; flex-direction:column; gap:4px;">
-                <span>X</span>
-                <input type="number" data-offset-field="x" value="${offset.x}" ${editable ? '' : 'disabled'} />
-            </label>
-            <label style="display:flex; flex-direction:column; gap:4px;">
-                <span>Y</span>
-                <input type="number" data-offset-field="y" value="${offset.y}" ${editable ? '' : 'disabled'} />
-            </label>
-            <button data-offset-delete="${escapeHtml(offset.editKey)}" ${editable ? '' : 'disabled'}>${feLocalize('TODO', 'Delete')}</button>
-            ${offset.hasTrigger ? `<div style="grid-column:1 / span 3; color: var(--vscode-descriptionForeground);">${feLocalize('TODO', 'Trigger is preserved and remains read-only in this preview editor.')}</div>` : ''}
-        </div>`).join('') ?? '';
-
-    return `
-        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
-            <div>
-                <h3 style="margin:0;">${escapeHtml(selected.label)}</h3>
-                <div style="color: var(--vscode-descriptionForeground); margin-top:4px;">${feLocalize('TODO', 'Rendered position')}: ${selected.currentPosition.x}, ${selected.currentPosition.y}</div>
-            </div>
-            <span style="padding:2px 8px; border-radius:999px; background:${editable ? 'var(--vscode-badge-background)' : 'rgba(127,127,127,0.25)'}; color: var(--vscode-badge-foreground);">${editable ? feLocalize('TODO', 'Editable') : feLocalize('TODO', 'Read-only')}</span>
-        </div>
-        <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
-            <div style="font-size:12px; color: var(--vscode-descriptionForeground);">${escapeHtml(selected.sourceFile)}</div>
-            <button id="focus-layout-open-source">${feLocalize('TODO', 'Open Source')}</button>
-            <label style="display:flex; flex-direction:column; gap:4px;">
-                <span>${feLocalize('TODO', 'Base X')}</span>
-                <input id="focus-layout-x" type="number" value="${focusDraft?.x ?? selected.currentPosition.x}" ${editable ? '' : 'disabled'} />
-            </label>
-            <label style="display:flex; flex-direction:column; gap:4px;">
-                <span>${feLocalize('TODO', 'Base Y')}</span>
-                <input id="focus-layout-y" type="number" value="${focusDraft?.y ?? selected.currentPosition.y}" ${editable ? '' : 'disabled'} />
-            </label>
-            <label style="display:flex; flex-direction:column; gap:4px;">
-                <span>${feLocalize('TODO', 'Relative Position ID')}</span>
-                <select id="focus-layout-relative" ${editable ? '' : 'disabled'}>
-                    <option value="">${feLocalize('TODO', '(none)')}</option>
-                    ${activeFocusIds.map(focusId => `<option value="${escapeHtml(focusId)}" ${focusDraft?.relativePositionId === focusId ? 'selected' : ''}>${escapeHtml(focusId)}</option>`).join('')}
-                </select>
-            </label>
-            <div>
-                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-                    <strong>${feLocalize('TODO', 'Offsets')}</strong>
-                    <button id="focus-layout-add-offset" ${editable ? '' : 'disabled'}>${feLocalize('TODO', 'Add Offset')}</button>
-                </div>
-                ${offsetRows || `<div style="color: var(--vscode-descriptionForeground);">${feLocalize('TODO', 'No offsets')}</div>`}
-            </div>
-        </div>`;
-}
-
-function renderPointLayoutInspector(selected: LayoutTargetDescriptor, pointDraft: FocusLayoutPointDraft | undefined): string {
-    const editable = !!pointDraft?.editable && !focusLayoutStale;
-    return `
-        <div style="display:flex; justify-content:space-between; gap:10px; align-items:flex-start;">
-            <div>
-                <h3 style="margin:0;">${escapeHtml(selected.label)}</h3>
-                <div style="color: var(--vscode-descriptionForeground); margin-top:4px;">${feLocalize('TODO', 'Current position')}: ${selected.currentPosition.x}, ${selected.currentPosition.y}</div>
-            </div>
-            <span style="padding:2px 8px; border-radius:999px; background:${editable ? 'var(--vscode-badge-background)' : 'rgba(127,127,127,0.25)'}; color: var(--vscode-badge-foreground);">${editable ? feLocalize('TODO', 'Editable') : feLocalize('TODO', 'Read-only')}</span>
-        </div>
-        <div style="margin-top:12px; display:flex; flex-direction:column; gap:10px;">
-            <div style="font-size:12px; color: var(--vscode-descriptionForeground);">${escapeHtml(selected.sourceFile)}</div>
-            <button id="focus-layout-open-source">${feLocalize('TODO', 'Open Source')}</button>
-            <label style="display:flex; flex-direction:column; gap:4px;">
-                <span>X</span>
-                <input id="focus-layout-x" type="number" value="${pointDraft?.x ?? selected.currentPosition.x}" ${editable ? '' : 'disabled'} />
-            </label>
-            <label style="display:flex; flex-direction:column; gap:4px;">
-                <span>Y</span>
-                <input id="focus-layout-y" type="number" value="${pointDraft?.y ?? selected.currentPosition.y}" ${editable ? '' : 'disabled'} />
-            </label>
-        </div>`;
-}
-
-function wireLayoutInspectorActions() {
+function wireLayoutStatusActions() {
     if (!focusLayoutEditorEnabled) {
         return;
     }
 
-    const reloadButton = document.getElementById('focus-layout-reload') as HTMLButtonElement | null;
+    const reloadButton = document.getElementById('focus-layout-reload-inline') as HTMLButtonElement | null;
     reloadButton?.addEventListener('click', () => {
         focusLayoutDraft = createLayoutDraftFromFocusTrees();
         focusLayoutStale = false;
@@ -633,10 +538,10 @@ function wireLayoutInspectorActions() {
         void buildContent();
     });
 
-    const discardStaleButton = document.getElementById('focus-layout-discard-stale') as HTMLButtonElement | null;
+    const discardStaleButton = document.getElementById('focus-layout-discard-stale-inline') as HTMLButtonElement | null;
     discardStaleButton?.addEventListener('click', discardLayoutDraft);
 
-    const openSourceButton = document.getElementById('focus-layout-open-source') as HTMLButtonElement | null;
+    const openSourceButton = document.getElementById('focus-layout-open-source-inline') as HTMLButtonElement | null;
     openSourceButton?.addEventListener('click', () => {
         const target = focusLayoutSelectedKey ? currentLayoutTargets[focusLayoutSelectedKey] : undefined;
         if (!target || target.sourceStart === undefined) {
@@ -650,123 +555,6 @@ function wireLayoutInspectorActions() {
             file: target.sourceFile === focusLayoutActiveFile ? undefined : target.sourceFile,
         });
     });
-
-    const xInput = document.getElementById('focus-layout-x') as HTMLInputElement | null;
-    xInput?.addEventListener('change', () => updateSelectedLayoutScalar('x', parseInt(xInput.value, 10) || 0));
-
-    const yInput = document.getElementById('focus-layout-y') as HTMLInputElement | null;
-    yInput?.addEventListener('change', () => updateSelectedLayoutScalar('y', parseInt(yInput.value, 10) || 0));
-
-    const relativeSelect = document.getElementById('focus-layout-relative') as HTMLSelectElement | null;
-    relativeSelect?.addEventListener('change', () => {
-        if (!focusLayoutSelectedKey) {
-            return;
-        }
-        const draft = ensureLayoutDraft().focuses[focusLayoutSelectedKey];
-        if (!draft || !draft.editable || focusLayoutStale) {
-            return;
-        }
-        draft.relativePositionId = relativeSelect.value || null;
-        postDraftChange();
-        void buildContent();
-    });
-
-    const addOffsetButton = document.getElementById('focus-layout-add-offset') as HTMLButtonElement | null;
-    addOffsetButton?.addEventListener('click', () => {
-        if (!focusLayoutSelectedKey) {
-            return;
-        }
-        const draft = ensureLayoutDraft().focuses[focusLayoutSelectedKey];
-        if (!draft || !draft.editable || focusLayoutStale) {
-            return;
-        }
-
-        draft.offsets.push({
-            editKey: `offset:new:${draft.editKey}:${Date.now()}:${draft.offsets.length}`,
-            x: 0,
-            y: 0,
-            hasTrigger: false,
-            isNew: true,
-        });
-        postDraftChange();
-        void buildContent();
-    });
-
-    document.querySelectorAll<HTMLElement>('[data-offset-key]').forEach(row => {
-        const offsetKey = row.getAttribute('data-offset-key');
-        if (!offsetKey || !focusLayoutSelectedKey) {
-            return;
-        }
-
-        const xField = row.querySelector<HTMLInputElement>('[data-offset-field="x"]');
-        const yField = row.querySelector<HTMLInputElement>('[data-offset-field="y"]');
-        xField?.addEventListener('change', () => updateSelectedOffset(offsetKey, 'x', parseInt(xField.value, 10) || 0));
-        yField?.addEventListener('change', () => updateSelectedOffset(offsetKey, 'y', parseInt(yField.value, 10) || 0));
-    });
-
-    document.querySelectorAll<HTMLButtonElement>('[data-offset-delete]').forEach(button => {
-        const offsetKey = button.getAttribute('data-offset-delete');
-        if (!offsetKey) {
-            return;
-        }
-        button.addEventListener('click', () => {
-            if (!focusLayoutSelectedKey) {
-                return;
-            }
-            const draft = ensureLayoutDraft().focuses[focusLayoutSelectedKey];
-            if (!draft || !draft.editable || focusLayoutStale) {
-                return;
-            }
-            draft.offsets = draft.offsets.filter(offset => offset.editKey !== offsetKey);
-            postDraftChange();
-            void buildContent();
-        });
-    });
-}
-
-function updateSelectedLayoutScalar(field: 'x' | 'y', value: number) {
-    if (!focusLayoutSelectedKey || focusLayoutStale) {
-        return;
-    }
-
-    const draft = ensureLayoutDraft();
-    const target = currentLayoutTargets[focusLayoutSelectedKey];
-    if (!target) {
-        return;
-    }
-
-    if (target.kind === 'focus') {
-        const focusDraft = draft.focuses[focusLayoutSelectedKey];
-        if (!focusDraft || !focusDraft.editable) {
-            return;
-        }
-        focusDraft[field] = Math.round(value);
-    } else {
-        const pointDraft = (target.kind === 'continuous' ? draft.continuous[focusLayoutSelectedKey] : draft.inlayRefs[focusLayoutSelectedKey]);
-        if (!pointDraft || !pointDraft.editable) {
-            return;
-        }
-        pointDraft[field] = Math.round(value);
-    }
-
-    postDraftChange();
-    void buildContent();
-}
-
-function updateSelectedOffset(offsetKey: string, field: 'x' | 'y', value: number) {
-    if (!focusLayoutSelectedKey || focusLayoutStale) {
-        return;
-    }
-
-    const draft = ensureLayoutDraft().focuses[focusLayoutSelectedKey];
-    const offset = draft?.offsets.find(existing => existing.editKey === offsetKey);
-    if (!draft || !draft.editable || !offset) {
-        return;
-    }
-
-    offset[field] = Math.round(value);
-    postDraftChange();
-    void buildContent();
 }
 
 function discardLayoutDraft() {
@@ -1133,7 +921,7 @@ function setupLayoutInteractionHandlers() {
         focusLayoutStatusMessage = undefined;
         persistLayoutState();
         renderLayoutSelection();
-        renderLayoutInspector();
+        updateLayoutToolbar();
     }, true);
 
     document.addEventListener('mousedown', event => {
@@ -1159,7 +947,7 @@ function setupLayoutInteractionHandlers() {
         focusLayoutSelectedKey = key;
         persistLayoutState();
         renderLayoutSelection();
-        renderLayoutInspector();
+        updateLayoutToolbar();
 
         if (!descriptor.editable) {
             return;
@@ -1414,7 +1202,6 @@ window.addEventListener('load', tryRun(async function() {
                 command: 'focusLayoutApply',
                 draft: focusLayoutDraft,
             });
-            renderLayoutInspector();
             updateLayoutToolbar();
         });
 

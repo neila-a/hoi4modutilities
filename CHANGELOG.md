@@ -4,7 +4,16 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.7] - 2026/04/02 - Latest
+## [0.13.8] - 2026/04/03 - Latest
+
+### Added
+* Expose the experimental focus layout editor as a dedicated `hoi4ModUtilities.focusLayoutEditor` setting in the VS Code Settings UI while keeping legacy `featureFlags` compatibility.
+
+### Fixed
+* Resolve the focus layout editor setting dynamically and reload open focus previews when the setting changes, so enabling the toggle now has an immediate effect in the same VS Code session.
+* Rework the focus layout editor UI so `Edit Layout` appears to the left of `Search`, position edits are drag-only, and no popup inspector overlaps the preview canvas.
+
+## [0.13.7] - 2026/04/02
 
 ### Fixed
 * Broaden HOI4 localisation highlighting detection to accept spaced or dashed localisation filenames such as `name l_english.yml` and `name-l_english.yaml`, and fall back to inline HOI4 token hints when a file does not advertise itself through a standard path.

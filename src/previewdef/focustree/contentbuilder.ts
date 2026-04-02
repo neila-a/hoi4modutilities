@@ -11,7 +11,7 @@ import { FocusTreeLoader } from './loader';
 import { LoaderSession } from '../../util/loader/loader';
 import { debug } from '../../util/debug';
 import { StyleTable, normalizeForStyle } from '../../util/styletable';
-import { focusLayoutEditor, useConditionInFocus } from '../../util/featureflags';
+import { isFocusLayoutEditorEnabled, useConditionInFocus } from '../../util/featureflags';
 import { getLocalisedTextQuick } from "../../util/localisationIndex";
 import { localisationIndex } from "../../util/featureflags";
 import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
@@ -23,6 +23,7 @@ const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 
 export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.Uri, webview: vscode.Webview, documentVersion: number): Promise<string> {
     const setPreviewFileUriScript = { content: `window.previewedFileUri = "${uri.toString()}";` };
+    const focusLayoutEditorEnabled = isFocusLayoutEditorEnabled();
 
     try {
         const session = new LoaderSession(false);
@@ -40,7 +41,7 @@ export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.U
         const styleTable = new StyleTable();
         const jsCodes: string[] = [];
         const styleNonce = Math.random().toString(36).slice(2);
-        const baseContent = await renderFocusTrees(focustrees, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file, documentVersion);
+        const baseContent = await renderFocusTrees(focustrees, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file, documentVersion, focusLayoutEditorEnabled);
         jsCodes.push(i18nTableAsScript());
 
         return html(
@@ -83,6 +84,7 @@ async function renderFocusTrees(
     styleNonce: string,
     file: string,
     documentVersion: number,
+    focusLayoutEditorEnabled: boolean,
 ): Promise<string> {
     const gridBox: HOIPartial<GridBoxType> = {
         position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
@@ -110,7 +112,7 @@ async function renderFocusTrees(
     jsCodes.push('window.useConditionInFocus = ' + useConditionInFocus);
     jsCodes.push('window.xGridSize = ' + xGridSize);
     jsCodes.push('window.yGridSize = ' + yGridSize);
-    jsCodes.push('window.focusLayoutEditorEnabled = ' + JSON.stringify(focusLayoutEditor));
+    jsCodes.push('window.focusLayoutEditorEnabled = ' + JSON.stringify(focusLayoutEditorEnabled));
     jsCodes.push('window.focusLayoutDocumentVersion = ' + JSON.stringify(documentVersion));
     jsCodes.push('window.focusLayoutActiveFile = ' + JSON.stringify(file));
 
@@ -139,8 +141,7 @@ async function renderFocusTrees(
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +
-        renderLayoutInspector(styleTable) +
-        renderToolBar(focusTrees, styleTable)
+        renderToolBar(focusTrees, styleTable, focusLayoutEditorEnabled)
     );
 }
 
@@ -173,7 +174,7 @@ function renderWarningContainer(styleTable: StyleTable) {
     </div>`;
 }
 
-function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string {
+function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable, focusLayoutEditorEnabled: boolean): string {
     const focuses = focusTrees.length <= 1 ? '' : `
         <label for="focuses" class="${styleTable.style('focusesLabel', () => `margin-right:5px`)}">${localize('focustree.focustree', 'Focus tree: ')}</label>
         <div class="select-container ${styleTable.style('marginRight10', () => `margin-right:10px`)}">
@@ -242,50 +243,31 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
             <i class="codicon codicon-warning"></i>
         </button>`;
 
-    const layoutButtons = !focusLayoutEditor ? '' : `
-        <div id="focus-layout-toolbar" class="${styleTable.style('focusLayoutToolbar', () => `display:flex; align-items:center; gap:6px; margin-left:auto;`)}">
+    const layoutButtons = !focusLayoutEditorEnabled ? '' : `
+        <div id="focus-layout-toolbar" class="${styleTable.style('focusLayoutToolbar', () => `display:flex; align-items:center; gap:6px; margin-right:10px;`)}">
             <button id="focus-layout-edit" title="${localize('TODO', 'Toggle layout edit mode')}">${localize('TODO', 'Edit Layout')}</button>
             <button id="focus-layout-apply" title="${localize('TODO', 'Apply layout changes')}" style="display:none">${localize('TODO', 'Apply')}</button>
             <button id="focus-layout-discard" title="${localize('TODO', 'Discard layout draft')}" style="display:none">${localize('TODO', 'Discard')}</button>
+            <div id="focus-layout-status" class="${styleTable.style('focusLayoutStatus', () => `
+                display:none;
+                align-items:center;
+                gap:6px;
+                min-width:0;
+                color: var(--vscode-descriptionForeground);
+            `)}"></div>
         </div>`;
 
     return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; height: 40px;`)}">
         <div class="toolbar">
             ${focuses}
+            ${layoutButtons}
             ${searchbox}
             ${inlayWindowsToggle}
             ${inlayWindows}
             ${useConditionInFocus ? conditions + inlayConditions : allowbranch}
             ${warningsButton}
-            ${layoutButtons}
         </div>
     </div>`;
-}
-
-function renderLayoutInspector(styleTable: StyleTable): string {
-    if (!focusLayoutEditor) {
-        return '';
-    }
-
-    return `
-        <aside id="focus-layout-inspector" class="${styleTable.style('focusLayoutInspector', () => `
-            position: fixed;
-            top: 52px;
-            right: 16px;
-            width: 340px;
-            max-height: calc(100vh - 68px);
-            overflow: auto;
-            padding: 14px;
-            box-sizing: border-box;
-            display: none;
-            background: color-mix(in srgb, var(--vscode-sideBar-background) 92%, transparent);
-            border: 1px solid var(--vscode-panel-border);
-            border-radius: 8px;
-            z-index: 40;
-            backdrop-filter: blur(8px);
-        `)}">
-            <div id="focus-layout-inspector-content"></div>
-        </aside>`;
 }
 
 function getInlayGfxStyleKey(gfxName: string | undefined, gfxFile: string | undefined) {

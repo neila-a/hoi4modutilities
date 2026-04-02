@@ -9,6 +9,7 @@ import { FocusLayoutApplyResultMessage, FocusLayoutDraft, FocusLayoutMessage } f
 import { buildFocusLayoutWorkspaceEdit } from './layouteditservice';
 import { localize } from '../../util/i18n';
 import { forceError } from '../../util/common';
+import { ConfigurationKey } from '../../constants';
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -24,11 +25,21 @@ class FocusTreePreview extends PreviewBase {
     private focusTreeLoader: FocusTreeLoader;
     private content: string | undefined;
     private layoutDraft: FocusLayoutDraft | undefined;
+    private configurationHandler: vscode.Disposable;
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
         this.focusTreeLoader = new FocusTreeLoader(getRelativePathInWorkspace(this.uri), () => Promise.resolve(this.content ?? ''));
         this.focusTreeLoader.onLoadDone(r => this.updateDependencies(r.dependencies));
+        this.configurationHandler = vscode.workspace.onDidChangeConfiguration(event => {
+            if (
+                event.affectsConfiguration(`${ConfigurationKey}.focusLayoutEditor`)
+                || event.affectsConfiguration(`${ConfigurationKey}.featureFlags`)
+            ) {
+                this.layoutDraft = undefined;
+                this.reload();
+            }
+        });
     }
 
     protected async getContent(document: vscode.TextDocument): Promise<string> {
@@ -118,6 +129,11 @@ class FocusTreePreview extends PreviewBase {
 
     private async postLayoutResult(message: FocusLayoutApplyResultMessage): Promise<void> {
         await this.panel.webview.postMessage(message);
+    }
+
+    public dispose(): void {
+        super.dispose();
+        this.configurationHandler.dispose();
     }
 }
 
