@@ -4,7 +4,17 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.5] - 2026/04/01 - Latest
+## [0.13.7] - 2026/04/02 - Latest
+
+### Fixed
+* Broaden HOI4 localisation highlighting detection to accept spaced or dashed localisation filenames such as `name l_english.yml` and `name-l_english.yaml`, and fall back to inline HOI4 token hints when a file does not advertise itself through a standard path.
+
+## [0.13.6] - 2026/04/02
+
+### Fixed
+* Make HOI4 localisation highlighting recognize normal localisation file paths like `localisation/.../*_l_*.yml` even before the file text is fully parsed, so highlighting appears on typical mod localisation files that were previously skipped by the overly strict text-only detector.
+
+## [0.13.5] - 2026/04/01
 
 ### Fixed
 * Keep the fallback preview toolbar button mutually exclusive with the context-driven preview button so focus files show only one preview action.

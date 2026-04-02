@@ -7,3 +7,6 @@
 - When the user provides a concrete VS Code log file for an unresolved runtime issue, stop iterating on hypotheses and anchor the next fix to the logged error first.
 - When a runtime error points at a utility abstraction like lodash `chain`, prefer replacing that abstraction on the hot path with a small native implementation instead of trying to preserve a brittle shimmed chain API.
 - When broadening menu visibility as a fallback, keep the fallback entry mutually exclusive with the context-driven entry or VS Code will render duplicate toolbar buttons.
+- When the user reports one surface is fixed but another still fails, narrow the next pass to that subsystem only instead of reopening the whole activation theory.
+- When the user offers a concrete edge-case hypothesis like a spaced localisation filename, turn it into a direct regression test instead of only broadening the theory in prose.
+- Do not bump the extension version for every intermediate debugging pass. In this repo, keep version changes for intentional release batches or user-facing install points, and group multiple small fixes under one planned version when possible.

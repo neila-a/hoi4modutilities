@@ -1,23 +1,20 @@
-# HOI4 Mod Utilities Focus Preview Runtime Cleanup Todo
+# HOI4 Mod Utilities Localisation Highlighting Follow-up Todo
 
 ## Plan
-- [ ] Capture the newly reported duplicate focus preview button and remaining lodash `chain(...).flatMap()` runtime failure
-- [ ] Inspect the focus preview hot paths for remaining lodash chain usage that can execute at runtime
-- [ ] Restore a single preview toolbar entry and replace the risky chain-based hot paths with native logic
-- [ ] Verify with local build/test/package steps and document the resulting fix
+- [x] Re-focus the investigation on the remaining localisation highlighting issue now that focus preview is working again
+- [x] Check the installed extension version and recent VS Code logs for highlighting-specific failures or detection misses
+- [x] Broaden localisation detection for spaced filenames and non-standard-but-valid HOI4 token cases
+- [x] Re-run verification and document the remaining manual validation step
 
 ## Notes
-- User reports two concrete issues after `0.13.4`: duplicate focus preview toolbar buttons and `TypeError: (0 , s.chain)(...).flatMap is not a function`.
-- The previous fix only removed one chain usage in preview provider selection; more runtime chain usage remains in focus-preview code.
+- User confirms focus preview is back, so the remaining defect is isolated to localisation highlighting.
+- The latest logs showed activation without localisation-highlighting exceptions, which pointed to file detection rather than another extension-host crash.
+- The installed package has already moved to `server.hoi4modutilities-0.13.6`, so the next pass needs to target a narrower false-negative in localisation detection rather than installation drift.
+- A plausible missed case is filenames like `name l_english.yml`, so this pass adds direct regression coverage for spaced and dashed localisation filenames.
+- Another plausible miss is localisation entries written as `KEY: "value"` without the optional numeric version token, so this pass checks the string-range parser as well as document detection.
 
 ## Review
-- Implemented:
-  - fixed the duplicate preview toolbar entry by making the fallback preview button conditional on `!server.shouldShowHoi4Preview`
-  - removed remaining lodash `chain(...).flatMap()` usage from focus preview runtime paths in `focustree/loader.ts` and `focustree/schema.ts`
-  - kept the same focus-preview behavior using native `flatMap`, `Set`, and simple loops instead of brittle chain wrappers
-  - bumped the package version to `0.13.5` and documented the runtime cleanup in the changelog
-- Verification:
-  - `npm run compile-ts`: passed
-  - `npm run lint`: passed
-  - `npm test`: passed
-  - `npm run package`: passed and produced `hoi4modutilities-0.13.5.vsix`
+- Root cause candidate: the previous fix still treated localisation filenames too narrowly and only recognized `_l_*.yml`, which could miss valid filenames like `name l_english.yml` or `name-l_english.yaml`.
+- Fix: accept spaced/dashed `l_<language>` file names, support `.yaml`, and fall back to detecting HOI4 inline tokens such as `§`, `£`, `$...$`, and `[scripted_loc]` when the path is not standard.
+- Additional fix: make localisation string extraction accept `KEY: "value"` as well as `KEY:0 "value"` so highlight spans still materialize when the numeric version token is omitted.
+- Verification: `npm test` and `npm run package` passed again without another version bump, still producing `hoi4modutilities-0.13.7.vsix`.

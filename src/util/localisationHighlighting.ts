@@ -47,13 +47,30 @@ export interface LocalisationDecoration {
 
 const localisationHeaderPattern = /^\uFEFF?\s*l_[a-z_]+:/im;
 const localisationEntryPattern = /^\uFEFF?\s*[^\s#][^:]*:\s*\d+\s*"/;
+const localisationValuePattern = /^\uFEFF?\s*[^\s#][^:]*:\s*(?:\d+\s*)?"/;
 const colorCodePattern = /§([RGBYHWTCLObg0123456789t!])/g;
 const textIconPattern = /£[A-Za-z0-9_.|:-]+£?/g;
 const localisationReferencePattern = /\$[^$\r\n]+\$/g;
 const scriptedLocalisationPattern = /\[[^\]\r\n]+\]/g;
+const hoi4LocalisationExtensionPattern = /\.ya?ml$/i;
+const hoi4LocalisationPathPattern = /(^|[\\/])(locali[sz]ation)([\\/]|$)/i;
+const hoi4LocalisationFilePattern = /(?:^|[ _-])l_[a-z_]+\.ya?ml$/i;
+const hoi4LocalisationTokenHintPattern = /§[RGBYHWTCLObg0123456789t!]|£[A-Za-z0-9_.|:-]+£?|\$[^$\r\n]+\$|\[[^\]\r\n]+\]/;
 
 export function isHoi4LocalisationText(text: string): boolean {
     return localisationHeaderPattern.test(text) || localisationEntryPattern.test(text);
+}
+
+export function isLikelyHoi4LocalisationPath(path: string): boolean {
+    if (!hoi4LocalisationExtensionPattern.test(path)) {
+        return false;
+    }
+
+    return hoi4LocalisationPathPattern.test(path) || hoi4LocalisationFilePattern.test(path);
+}
+
+export function hasHoi4LocalisationTokenHints(text: string): boolean {
+    return hoi4LocalisationTokenHintPattern.test(text);
 }
 
 export function findLocalisationStringRanges(text: string): LocalisationStringRange[] {
@@ -68,12 +85,15 @@ export function findLocalisationStringRanges(text: string): LocalisationStringRa
 
         const lineStart = lineMatch.index ?? 0;
         const lineWithoutBreak = fullLine.replace(/[\r\n]+$/, '');
-        const prefixMatch = lineWithoutBreak.match(localisationEntryPattern);
-        if (!prefixMatch) {
+        if (!isRelevantLocalisationLine(lineWithoutBreak)) {
             continue;
         }
 
-        const openingQuoteIndex = prefixMatch[0].length - 1;
+        const openingQuoteIndex = lineWithoutBreak.indexOf('"');
+        if (openingQuoteIndex === -1) {
+            continue;
+        }
+
         let closingQuoteIndex = -1;
         for (let i = openingQuoteIndex + 1; i < lineWithoutBreak.length; i++) {
             const ch = lineWithoutBreak[i];
@@ -260,6 +280,19 @@ function appendPatternDecorations(
     }
 }
 
+function isRelevantLocalisationLine(line: string): boolean {
+    const trimmed = line.trimStart();
+    if (!trimmed || trimmed.startsWith('#')) {
+        return false;
+    }
+
+    if (localisationHeaderPattern.test(trimmed)) {
+        return false;
+    }
+
+    return localisationValuePattern.test(trimmed);
+}
+
 function updateEditorDecorations(
     editor: vscode.TextEditor,
     colorCodeTypes: Map<Hoi4LocalisationColorCode, vscode.TextEditorDecorationType>,
@@ -333,11 +366,16 @@ function clearDecorations(
 
 function isHoi4LocalisationDocument(document: vscode.TextDocument): boolean {
     const path = document.uri.fsPath || document.uri.path;
-    if (!path.toLowerCase().endsWith('.yml')) {
+    if (!hoi4LocalisationExtensionPattern.test(path)) {
         return false;
     }
 
-    return isHoi4LocalisationText(document.getText().slice(0, 4000));
+    if (isLikelyHoi4LocalisationPath(path)) {
+        return true;
+    }
+
+    const previewText = document.getText().slice(0, 64000);
+    return isHoi4LocalisationText(previewText) || hasHoi4LocalisationTokenHints(previewText);
 }
 
 function createDecorationBuckets() {
