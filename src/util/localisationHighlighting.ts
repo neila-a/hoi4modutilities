@@ -31,6 +31,7 @@ export const hoi4LocalisationColors = {
 
 export type Hoi4LocalisationColorCode = keyof typeof hoi4LocalisationColors;
 type NonResetColorCode = Exclude<Hoi4LocalisationColorCode, '!'>;
+export type LocalisationThemeTone = 'dark' | 'light';
 export type LocalisationDecorationKind = 'colorCode' | 'colorText' | 'textIcon' | 'localisationReference' | 'scriptedLocalisation';
 
 export interface LocalisationStringRange {
@@ -137,44 +138,7 @@ export function collectLocalisationDecorations(text: string): LocalisationDecora
 }
 
 export function registerLocalisationHighlighting(): vscode.Disposable {
-    const colorCodeTypes = new Map<Hoi4LocalisationColorCode, vscode.TextEditorDecorationType>();
-    const colorTextTypes = new Map<NonResetColorCode, vscode.TextEditorDecorationType>();
-    const tokenTypes = {
-        textIcon: vscode.window.createTextEditorDecorationType({
-            color: '#4FD7FF',
-            fontWeight: 'bold',
-            backgroundColor: '#4FD7FF22',
-            borderRadius: '2px',
-        }),
-        localisationReference: vscode.window.createTextEditorDecorationType({
-            color: '#F4D35E',
-            fontWeight: 'bold',
-            backgroundColor: '#F4D35E22',
-            borderRadius: '2px',
-        }),
-        scriptedLocalisation: vscode.window.createTextEditorDecorationType({
-            color: '#7AA6FF',
-            fontStyle: 'italic',
-            backgroundColor: '#7AA6FF22',
-            borderRadius: '2px',
-        }),
-    } satisfies Record<Exclude<LocalisationDecorationKind, 'colorCode' | 'colorText'>, vscode.TextEditorDecorationType>;
-
-    for (const [code, info] of Object.entries(hoi4LocalisationColors) as [Hoi4LocalisationColorCode, typeof hoi4LocalisationColors[Hoi4LocalisationColorCode]][]) {
-        colorCodeTypes.set(code, vscode.window.createTextEditorDecorationType({
-            color: info.color,
-            fontWeight: code === '!' ? 'normal' : 'bold',
-            fontStyle: code === '!' ? 'italic' : 'normal',
-            backgroundColor: code === '!' ? undefined : `${info.color}22`,
-            borderRadius: '2px',
-        }));
-
-        if (code !== '!') {
-            colorTextTypes.set(code, vscode.window.createTextEditorDecorationType({
-                color: info.color,
-            }));
-        }
-    }
+    let decorationSet = createDecorationSet(getThemeTone(vscode.window.activeColorTheme.kind));
 
     let refreshHandle: NodeJS.Timeout | undefined;
     const scheduleRefresh = (document?: vscode.TextDocument) => {
@@ -196,29 +160,34 @@ export function registerLocalisationHighlighting(): vscode.Disposable {
             }
 
             try {
-                updateEditorDecorations(editor, colorCodeTypes, colorTextTypes, tokenTypes);
+                updateEditorDecorations(editor, decorationSet.colorCodeTypes, decorationSet.colorTextTypes, decorationSet.tokenTypes);
             } catch (error) {
                 reportLocalisationHighlightingError(error, editor.document);
             }
         }
     };
 
+    const rebuildDecorationTypes = () => {
+        decorationSet.dispose();
+        decorationSet = createDecorationSet(getThemeTone(vscode.window.activeColorTheme.kind));
+        scheduleRefresh();
+    };
+
     scheduleRefresh();
 
     const disposables: vscode.Disposable[] = [
+        vscode.window.onDidChangeActiveColorTheme(() => rebuildDecorationTypes()),
         vscode.window.onDidChangeActiveTextEditor(() => scheduleRefresh()),
         vscode.window.onDidChangeVisibleTextEditors(() => scheduleRefresh()),
         vscode.window.onDidChangeTextEditorVisibleRanges(e => scheduleRefresh(e.textEditor.document)),
         vscode.workspace.onDidOpenTextDocument(document => scheduleRefresh(document)),
         vscode.workspace.onDidChangeTextDocument(event => scheduleRefresh(event.document)),
         vscode.workspace.onDidCloseTextDocument(document => scheduleRefresh(document)),
-        ...colorCodeTypes.values(),
-        ...colorTextTypes.values(),
-        ...Object.values(tokenTypes),
         new vscode.Disposable(() => {
             if (refreshHandle) {
                 clearTimeout(refreshHandle);
             }
+            decorationSet.dispose();
         }),
     ];
 
@@ -280,6 +249,98 @@ function appendPatternDecorations(
     }
 }
 
+function createDecorationSet(themeTone: LocalisationThemeTone) {
+    const colorCodeTypes = new Map<Hoi4LocalisationColorCode, vscode.TextEditorDecorationType>();
+    const colorTextTypes = new Map<NonResetColorCode, vscode.TextEditorDecorationType>();
+    const tokenTypes = {
+        textIcon: vscode.window.createTextEditorDecorationType({
+            color: '#4FD7FF',
+            fontWeight: 'bold',
+            backgroundColor: '#4FD7FF22',
+            borderRadius: '2px',
+        }),
+        localisationReference: vscode.window.createTextEditorDecorationType({
+            color: '#F4D35E',
+            fontWeight: 'bold',
+            backgroundColor: '#F4D35E22',
+            borderRadius: '2px',
+        }),
+        scriptedLocalisation: vscode.window.createTextEditorDecorationType({
+            color: '#7AA6FF',
+            fontStyle: 'italic',
+            backgroundColor: '#7AA6FF22',
+            borderRadius: '2px',
+        }),
+    } satisfies Record<Exclude<LocalisationDecorationKind, 'colorCode' | 'colorText'>, vscode.TextEditorDecorationType>;
+
+    for (const [code, info] of Object.entries(hoi4LocalisationColors) as [Hoi4LocalisationColorCode, typeof hoi4LocalisationColors[Hoi4LocalisationColorCode]][]) {
+        colorCodeTypes.set(code, vscode.window.createTextEditorDecorationType({
+            color: info.color,
+            fontWeight: code === '!' ? 'normal' : 'bold',
+            fontStyle: code === '!' ? 'italic' : 'normal',
+            backgroundColor: code === '!' ? undefined : `${info.color}22`,
+            borderRadius: '2px',
+        }));
+
+        if (code !== '!') {
+            const correctedColor = correctLocalisationTextColor(info.color, themeTone);
+            colorTextTypes.set(code, vscode.window.createTextEditorDecorationType({
+                color: correctedColor,
+                fontWeight: '600',
+                backgroundColor: `${correctedColor}${themeTone === 'dark' ? '20' : '18'}`,
+                borderRadius: '2px',
+            }));
+        }
+    }
+
+    return {
+        colorCodeTypes,
+        colorTextTypes,
+        tokenTypes,
+        dispose: () => {
+            for (const decorationType of colorCodeTypes.values()) {
+                decorationType.dispose();
+            }
+            for (const decorationType of colorTextTypes.values()) {
+                decorationType.dispose();
+            }
+            for (const decorationType of Object.values(tokenTypes)) {
+                decorationType.dispose();
+            }
+        },
+    };
+}
+
+function getThemeTone(kind: vscode.ColorThemeKind): LocalisationThemeTone {
+    return kind === vscode.ColorThemeKind.Light || kind === vscode.ColorThemeKind.HighContrastLight ? 'light' : 'dark';
+}
+
+export function correctLocalisationTextColor(hexColor: string, themeTone: LocalisationThemeTone): string {
+    const rgb = parseHexColor(hexColor);
+    if (!rgb) {
+        return hexColor;
+    }
+
+    const luminance = getRelativeLuminance(rgb);
+    let adjusted = rgb;
+
+    if (themeTone === 'dark') {
+        if (luminance < 0.42) {
+            adjusted = blendColors(rgb, { r: 255, g: 255, b: 255 }, Math.min(0.58, 0.20 + (0.42 - luminance) * 1.35));
+        } else if (luminance > 0.88) {
+            adjusted = blendColors(rgb, { r: 0, g: 0, b: 0 }, Math.min(0.28, 0.08 + (luminance - 0.88) * 1.2));
+        }
+    } else {
+        if (luminance > 0.72) {
+            adjusted = blendColors(rgb, { r: 0, g: 0, b: 0 }, Math.min(0.65, 0.22 + (luminance - 0.72) * 1.6));
+        } else if (luminance < 0.20) {
+            adjusted = blendColors(rgb, { r: 255, g: 255, b: 255 }, Math.min(0.48, 0.12 + (0.20 - luminance) * 1.25));
+        }
+    }
+
+    return toHexColor(adjusted);
+}
+
 function isRelevantLocalisationLine(line: string): boolean {
     const trimmed = line.trimStart();
     if (!trimmed || trimmed.startsWith('#')) {
@@ -291,6 +352,46 @@ function isRelevantLocalisationLine(line: string): boolean {
     }
 
     return localisationValuePattern.test(trimmed);
+}
+
+function parseHexColor(hexColor: string): { r: number; g: number; b: number } | undefined {
+    const match = /^#?([0-9a-f]{6})$/i.exec(hexColor);
+    if (!match) {
+        return undefined;
+    }
+
+    const value = match[1];
+    return {
+        r: parseInt(value.slice(0, 2), 16),
+        g: parseInt(value.slice(2, 4), 16),
+        b: parseInt(value.slice(4, 6), 16),
+    };
+}
+
+function blendColors(
+    source: { r: number; g: number; b: number },
+    target: { r: number; g: number; b: number },
+    amount: number,
+): { r: number; g: number; b: number } {
+    const ratio = Math.max(0, Math.min(1, amount));
+    return {
+        r: Math.round(source.r + (target.r - source.r) * ratio),
+        g: Math.round(source.g + (target.g - source.g) * ratio),
+        b: Math.round(source.b + (target.b - source.b) * ratio),
+    };
+}
+
+function getRelativeLuminance(rgb: { r: number; g: number; b: number }): number {
+    const normalize = (channel: number) => {
+        const value = channel / 255;
+        return value <= 0.03928 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    };
+
+    return 0.2126 * normalize(rgb.r) + 0.7152 * normalize(rgb.g) + 0.0722 * normalize(rgb.b);
+}
+
+function toHexColor(rgb: { r: number; g: number; b: number }): string {
+    return `#${rgb.r.toString(16).padStart(2, '0')}${rgb.g.toString(16).padStart(2, '0')}${rgb.b.toString(16).padStart(2, '0')}`.toUpperCase();
 }
 
 function updateEditorDecorations(

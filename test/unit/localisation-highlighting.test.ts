@@ -1,6 +1,7 @@
 import * as assert from 'assert';
 import {
     collectLocalisationDecorations,
+    correctLocalisationTextColor,
     findLocalisationStringRanges,
     hasHoi4LocalisationTokenHints,
     isHoi4LocalisationText,
@@ -26,6 +27,16 @@ describe('localisation highlighting helpers', () => {
     it('detects HOI4 localisation token hints even without a parsed header', () => {
         assert.strictEqual(hasHoi4LocalisationTokenHints('Plain text §Ggreen§! £pol_power $TAG$ [ROOT.GetName]'), true);
         assert.strictEqual(hasHoi4LocalisationTokenHints('name: plain yaml value'), false);
+    });
+
+    it('corrects extreme text colors for readability across editor themes', () => {
+        const correctedWhite = correctLocalisationTextColor('#FFFFFF', 'light');
+        const correctedBlue = correctLocalisationTextColor('#0000FF', 'dark');
+
+        assert.notStrictEqual(correctedWhite, '#FFFFFF');
+        assert.notStrictEqual(correctedBlue, '#0000FF');
+        assert.match(correctedWhite, /^#[0-9A-F]{6}$/);
+        assert.match(correctedBlue, /^#[0-9A-F]{6}$/);
     });
 
     it('finds quoted localisation string ranges while ignoring comments', () => {
