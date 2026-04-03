@@ -1,20 +1,21 @@
-# HOI4 Mod Utilities Focus Preview P2 Stability Todo
+# HOI4 Definition RGB Picker Todo
 
 ## Plan
-- [x] Reconfirm the overlapping focus preview load snapshot risk in the host and loader
-- [x] Make each focus preview refresh use its own content snapshot instead of shared mutable preview state
-- [x] Preserve dependency cache reuse without reintroducing shared mutable loader state
-- [x] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
-- [x] Record review results and verification notes
+- [x] Inspect the current text-editing flow, parser token model, and country color file coverage
+- [x] Extend the same RGB picker support to ideology definition files without broadening to unrelated files
+- [x] Update focused unit tests to cover ideology file targeting while keeping country behavior intact
+- [x] Run targeted verification again and refresh the review notes
 
 ## Notes
-- Scope for this pass is only the review P2 item: prevent overlapping focus preview refreshes from sharing the same mutable content snapshot.
-- Keep the current `0.13.19` release line unless the user asks for a version change.
-- P1 stale refresh ordering fix remains in place and should keep working after this change.
+- Scope is limited to text-editor color picking for RGB values in country color files and ideology definition files.
+- Prefer the native VS Code color picker via `DocumentColorProvider` instead of building a custom UI.
+- Keep changes minimal and avoid touching unrelated preview or world map behavior.
 
 ## Review
-- `src/previewdef/focustree/index.ts` no longer shares a mutable `this.content` field across refreshes. Each full or partial refresh now builds a request-local `FocusTreeLoader` tied to that request's document text snapshot.
-- `src/previewdef/focustree/loader.ts` and `src/util/loader/loader.ts` now support cloning the current dependency-loader cache into a snapshot loader and adopting the refreshed cache back after a successful load, so overlapping refreshes do not share mutable loader state while normal dependency reuse still works.
-- Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
-- Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.19.vsix`.
-- Manual VS Code smoke testing was not run in this terminal session.
+- `src/util/countryColorProvider.ts` now registers a VS Code `DocumentColorProvider` during activation, so opening `common/countries/color.txt`, `common/countries/colors.txt`, `common/countries/cosmetic.txt`, or `common/ideologies/*.txt` exposes native RGB color picking directly in the text editor.
+- `src/util/countryColorProviderShared.ts` centralizes file-path matching for both country and ideology definitions, plus shared `color`/`color_ui` RGB block detection, comment skipping, clipping, and format-preserving rewrite helpers.
+- `test/unit/country-color-provider-shared.test.ts` and `test/unit/country-color-provider.test.ts` now cover ideology file targeting alongside the original country paths, while keeping RGB block discovery, comment filtering, formatting preservation, and picker-value clipping checks in place.
+- Release metadata was bumped to `0.13.20` in `package.json`, `package-lock.json`, and `CHANGELOG.md`.
+- Verification passed: `npm test` and `npm run package`.
+- Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.20.vsix`.
+- Manual in-editor smoke testing of the color picker UI was not run in this terminal session.
