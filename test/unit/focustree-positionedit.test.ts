@@ -20,7 +20,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const { getFocusTree } = require('../../src/previewdef/focustree/schema') as typeof import('../../src/previewdef/focustree/schema');
-const { buildFocusPositionTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
+const { buildFocusPositionTextChanges, buildCreateFocusTemplateTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
 const { getFocusPosition, getLocalPositionFromRenderedAbsolute } = require('../../src/previewdef/focustree/positioning') as typeof import('../../src/previewdef/focustree/positioning');
 
 describe('focus tree position edit helpers', () => {
@@ -111,5 +111,79 @@ describe('focus tree position edit helpers', () => {
 
         const localPosition = getLocalPositionFromRenderedAbsolute(root!, focusTree!, [], { x: 10, y: 20 });
         assert.deepStrictEqual(localPosition, { x: 7, y: 16 });
+    });
+
+    it('creates the requested full focus template inside the selected local focus tree', () => {
+        const content = `focus_tree = {
+    id = TEST_TREE
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+}`;
+        const result = buildCreateFocusTemplateTextChanges(
+            content,
+            'common/national_focus/create-focus.txt',
+            'focus-tree:common/national_focus/create-focus.txt:focus:0',
+            5,
+            6,
+        );
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(updated, /focus_tree = \{[\s\S]*?focus = \{[\s\S]*?id = ROOT[\s\S]*?focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 5[\s\S]*?y = 6[\s\S]*?completion_reward = \{[\s\S]*?log = "\[GetLogRoot\]: Focus Completed TAG_FOCUS_ID"[\s\S]*?\}\n    \}\n\}/);
+    });
+
+    it('creates the requested full shared focus template after the last local shared focus block', () => {
+        const content = readFixture('focus', 'modern-focuses.txt');
+        const result = buildCreateFocusTemplateTextChanges(
+            content,
+            'common/national_focus/modern-focuses.txt',
+            'focus-tree:common/national_focus/modern-focuses.txt:shared:top-level',
+            7,
+            8,
+        );
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\n\nshared_focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{[\s\S]*?log = "\[GetLogRoot\]: Focus Completed TAG_FOCUS_ID"[\s\S]*?\}\n\}\n\njoint_focus = \{/);
+    });
+
+    it('returns a placeholder range that still points at TAG_FOCUS_ID in BOM files', () => {
+        const content = '\uFEFFfocus_tree = {\n    id = TEST_TREE\n}';
+        const result = buildCreateFocusTemplateTextChanges(
+            content,
+            'common/national_focus/bom-create.txt',
+            'focus-tree:common/national_focus/bom-create.txt:focus:0',
+            2,
+            3,
+        );
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+        const placeholder = result.placeholderRange
+            ? updated.slice(result.placeholderRange.start, result.placeholderRange.end)
+            : undefined;
+
+        assert.strictEqual(placeholder, 'TAG_FOCUS_ID');
+        assert.match(updated, /^\uFEFFfocus_tree = \{/);
+    });
+
+    it('rejects create requests for imported or unknown tree edit keys', () => {
+        const content = `focus_tree = {
+    id = TEST_TREE
+}`;
+        const result = buildCreateFocusTemplateTextChanges(
+            content,
+            'common/national_focus/create-focus.txt',
+            'focus-tree:common/national_focus/other-file.txt:focus:0',
+            1,
+            1,
+        );
+
+        assert.match(result.error ?? '', /not editable/);
     });
 });

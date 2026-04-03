@@ -72,6 +72,8 @@ let suppressEditableFocusClickUntil = 0;
 const xGridSize: number = (window as any).xGridSize;
 const yGridSize: number = (window as any).yGridSize ?? 130;
 const focusPositionDragThresholdPx = 4;
+let currentGridLeftPadding = 0;
+let currentGridTopPadding = 0;
 
 function showInlayWindows() {
     return !!(window as any).__showInlayWindows;
@@ -168,6 +170,68 @@ function setupFocusPositionDragHandlers() {
         event.stopPropagation();
     }, true);
 
+}
+
+function isBlankCreateTarget(target: EventTarget | null): boolean {
+    const element = target as HTMLElement | null;
+    if (!element) {
+        return false;
+    }
+
+    if (element.closest('[data-focus-id], #inlaywindowplaceholder, #continuousFocuses, .toolbar-outer, #warnings-container, input, select, button, textarea, option')) {
+        return false;
+    }
+
+    return !!element.closest('#focustreecontent, #focus-gridbox, #focustreeplaceholder');
+}
+
+function getAbsoluteGridPositionFromMouseEvent(event: MouseEvent): NumberPosition | undefined {
+    const contentElement = document.getElementById('focustreecontent') as HTMLDivElement | null;
+    if (!contentElement) {
+        return undefined;
+    }
+
+    const scale = getState().scale || 1;
+    const contentRect = contentElement.getBoundingClientRect();
+    const localX = (event.clientX - contentRect.left) / scale;
+    const localY = (event.clientY - contentRect.top) / scale;
+
+    return {
+        x: Math.round((localX - currentGridLeftPadding) / xGridSize),
+        y: Math.round((localY - currentGridTopPadding) / yGridSize),
+    };
+}
+
+function hasRenderedFocusAtAbsolutePosition(position: NumberPosition): boolean {
+    return Object.values(currentFocusPositions).some(currentPosition => currentPosition.x === position.x && currentPosition.y === position.y);
+}
+
+function setupFocusTemplateCreateHandler() {
+    document.addEventListener('dblclick', event => {
+        if (!focusPositionEditMode || !currentRenderedFocusTree) {
+            return;
+        }
+
+        if (!isBlankCreateTarget(event.target)) {
+            return;
+        }
+
+        const targetPosition = getAbsoluteGridPositionFromMouseEvent(event);
+        if (!targetPosition || hasRenderedFocusAtAbsolutePosition(targetPosition)) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        vscode.postMessage({
+            command: 'createFocusTemplateAtPosition',
+            treeEditKey: currentRenderedFocusTree.createTemplate?.editKey ?? '',
+            targetAbsoluteX: targetPosition.x,
+            targetAbsoluteY: targetPosition.y,
+            documentVersion: focusPositionDocumentVersion,
+        });
+    }, true);
 }
 
 function clearFocusPositionDragBindings() {
@@ -327,31 +391,58 @@ async function buildContent() {
 
     const focusPosition: Record<string, NumberPosition> = {};
     calculateFocusAllowed(focusTree, allowBranchOptionsValue);
-    const focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, exprs)).filter((v): v is GridBoxItem => !!v);
+    let renderExprs = exprs;
+    let focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, renderExprs)).filter((v): v is GridBoxItem => !!v);
+    if (focusGridBoxItems.length === 0 && focuses.length > 0 && (selectedExprs.length > 0 || selectedInlayExprs.length > 0)) {
+        selectedExprs = [];
+        selectedInlayExprs = [];
+        setState({ selectedExprs, selectedInlayExprs });
+        renderExprs = [{ scopeName: '', nodeContent: 'has_focus_tree = ' + focusTree.id }, ...checkedFocusesExprs];
+
+        const fallbackAllowBranchOptionsValue: Record<string, boolean> = {};
+        focusTree.allowBranchOptions.forEach(option => {
+            const focus = focusTree.focuses[option];
+            fallbackAllowBranchOptionsValue[option] = !focus || focus.allowBranch === undefined || applyCondition(focus.allowBranch, renderExprs);
+        });
+        if (focusTree.isSharedFocues) {
+            focusTree.allowBranchOptions.forEach(option => {
+                fallbackAllowBranchOptionsValue[option] = true;
+            });
+        }
+
+        for (const key of Object.keys(focusPosition)) {
+            delete focusPosition[key];
+        }
+        calculateFocusAllowed(focusTree, fallbackAllowBranchOptionsValue);
+        focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, fallbackAllowBranchOptionsValue, focusPosition, renderExprs)).filter((v): v is GridBoxItem => !!v);
+    }
     currentRenderedFocusTree = focusTree;
     currentFocusPositions = { ...focusPosition };
-    currentRenderedExprs = exprs;
+    currentRenderedExprs = renderExprs;
 
     const minX = minBy(Object.values(focusPosition), 'x')?.x ?? 0;
     const leftPadding = gridbox.position.x._value - Math.min(minX * xGridSize, 0);
+    currentGridLeftPadding = leftPadding;
+    currentGridTopPadding = gridbox.position.y._value ?? 0;
 
     const focusTreeContent = await renderGridBoxCommon({ ...gridbox, position: { ...gridbox.position, x: toNumberLike(leftPadding) } }, {
         size: { width: 0, height: 0 },
         orientation: 'upper_left'
     }, {
+        id: 'focus-gridbox',
         styleTable,
         items: arrayToMap(focusGridBoxItems, 'id'),
         onRenderItem: item => Promise.resolve(
             renderedFocus[item.id]
                 .replace('{{position}}', item.gridX + ', ' + item.gridY)
-                .replace('{{iconClass}}', getFocusIcon(focusTree.focuses[item.id], exprs, styleTable))
+                .replace('{{iconClass}}', getFocusIcon(focusTree.focuses[item.id], renderExprs, styleTable))
             ),
         cornerPosition: 0.5,
     });
 
     focustreeplaceholder.innerHTML = focusTreeContent + styleTable.toStyleElement((window as any).styleNonce);
     const inlayWindowPlaceholder = document.getElementById('inlaywindowplaceholder') as HTMLDivElement;
-    inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, exprs);
+    inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, renderExprs);
 
     bindFocusPositionDragHandlers();
     subscribeNavigators();
@@ -658,6 +749,7 @@ window.addEventListener('load', tryRun(async function() {
     });
 
     setupFocusPositionDragHandlers();
+    setupFocusTemplateCreateHandler();
 
     const showInlayWindowsElement = document.getElementById('show-inlay-windows') as HTMLInputElement | null;
     if (showInlayWindowsElement) {

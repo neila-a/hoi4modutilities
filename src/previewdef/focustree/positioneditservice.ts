@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { Node, parseHoi4File } from "../../hoiformat/hoiparser";
-import { TextRange } from "./positioneditcommon";
+import { FocusTreeCreateMeta, TextRange } from "./positioneditcommon";
+import { collectFocusPositionFileMetadata } from "./positioneditmetadata";
 
 interface ScalarFieldMeta {
     nodeRange: TextRange;
@@ -22,6 +23,12 @@ export interface FocusPositionTextChange {
 
 export interface FocusPositionTextChangeResult {
     changes?: FocusPositionTextChange[];
+    error?: string;
+}
+
+export interface CreateFocusTemplateTextChangeResult {
+    changes?: FocusPositionTextChange[];
+    placeholderRange?: TextRange;
     error?: string;
 }
 
@@ -94,6 +101,182 @@ export function buildFocusPositionWorkspaceEdit(
     return { edit };
 }
 
+export function buildCreateFocusTemplateTextChanges(
+    content: string,
+    filePath: string,
+    treeEditKey: string,
+    targetAbsoluteX: number,
+    targetAbsoluteY: number,
+): CreateFocusTemplateTextChangeResult {
+    const bomOffset = content.startsWith('\uFEFF') ? 1 : 0;
+    const parseContent = bomOffset > 0 ? content.slice(bomOffset) : content;
+    const root = parseHoi4File(parseContent);
+    const metadata = collectFocusPositionFileMetadata(root, filePath);
+    const treeMeta = [
+        ...metadata.focusTrees,
+        ...(metadata.sharedTree ? [metadata.sharedTree] : []),
+        ...(metadata.jointTree ? [metadata.jointTree] : []),
+    ]
+        .map(meta => shiftTreeMeta(meta, bomOffset))
+        .find(meta => meta.editKey === treeEditKey);
+    if (!treeMeta) {
+        return { error: 'The selected focus tree is not editable in the current file.' };
+    }
+
+    if (!treeMeta.sourceRange) {
+        return { error: 'The selected focus tree has no writable insertion anchor.' };
+    }
+
+    const lineEnding = detectLineEnding(content);
+    const change = createFocusTemplateInsertionChange(
+        content,
+        treeMeta,
+        Math.round(targetAbsoluteX),
+        Math.round(targetAbsoluteY),
+        lineEnding,
+    );
+
+    return {
+        changes: [change.change],
+        placeholderRange: change.placeholderRange,
+    };
+}
+
+export function buildCreateFocusTemplateWorkspaceEdit(
+    document: vscode.TextDocument,
+    filePath: string,
+    treeEditKey: string,
+    targetAbsoluteX: number,
+    targetAbsoluteY: number,
+): { edit?: vscode.WorkspaceEdit; placeholderRange?: TextRange; error?: string } {
+    const result = buildCreateFocusTemplateTextChanges(
+        document.getText(),
+        filePath,
+        treeEditKey,
+        targetAbsoluteX,
+        targetAbsoluteY,
+    );
+    if (result.error) {
+        return { error: result.error };
+    }
+
+    const change = result.changes?.[0];
+    if (!change) {
+        return {};
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(
+        document.uri,
+        new vscode.Range(document.positionAt(change.range.start), document.positionAt(change.range.end)),
+        change.text,
+    );
+
+    return {
+        edit,
+        placeholderRange: result.placeholderRange,
+    };
+}
+
+function createFocusTemplateInsertionChange(
+    content: string,
+    treeMeta: FocusTreeCreateMeta,
+    targetAbsoluteX: number,
+    targetAbsoluteY: number,
+    lineEnding: string,
+): { change: FocusPositionTextChange; placeholderRange: TextRange } {
+    const blockName = treeMeta.kind === 'shared'
+        ? 'shared_focus'
+        : treeMeta.kind === 'joint'
+            ? 'joint_focus'
+            : 'focus';
+    const placeholder = 'TAG_FOCUS_ID';
+    const blockText = treeMeta.kind === 'focus'
+        ? buildNestedFocusTemplateBlock(content, treeMeta.sourceRange!, blockName, placeholder, targetAbsoluteX, targetAbsoluteY, lineEnding)
+        : buildTopLevelFocusTemplateBlock(content, treeMeta.sourceRange!, blockName, placeholder, targetAbsoluteX, targetAbsoluteY, lineEnding);
+
+    const placeholderOffset = blockText.text.indexOf(placeholder);
+    return {
+        change: {
+            range: { start: blockText.insertPosition, end: blockText.insertPosition },
+            text: blockText.text,
+        },
+        placeholderRange: {
+            start: blockText.insertPosition + placeholderOffset,
+            end: blockText.insertPosition + placeholderOffset + placeholder.length,
+        },
+    };
+}
+
+function buildNestedFocusTemplateBlock(
+    content: string,
+    blockRange: TextRange,
+    blockName: string,
+    placeholder: string,
+    x: number,
+    y: number,
+    lineEnding: string,
+): { insertPosition: number; text: string } {
+    const insertPosition = getBlockClosingLineStart(content, blockRange);
+    const { childIndent } = getBlockIndentation(content, blockRange);
+    const indentUnit = inferIndentUnit(content, getLineIndent(content, blockRange.start), blockRange);
+    const nestedIndent = childIndent + indentUnit;
+    const rewardIndent = nestedIndent + indentUnit;
+    const text =
+        `${childIndent}${blockName} = {${lineEnding}` +
+        `${nestedIndent}id = ${placeholder}${lineEnding}` +
+        `${nestedIndent}icon = GFX${lineEnding}` +
+        `${nestedIndent}cost = 1${lineEnding}` +
+        `${lineEnding}` +
+        `${nestedIndent}x = ${x}${lineEnding}` +
+        `${nestedIndent}y = ${y}${lineEnding}` +
+        `${lineEnding}` +
+        `${nestedIndent}completion_reward = {${lineEnding}` +
+        `${rewardIndent}log = "[GetLogRoot]: Focus Completed ${placeholder}"${lineEnding}` +
+        `${lineEnding}` +
+        `${nestedIndent}}${lineEnding}` +
+        `${childIndent}}${lineEnding}`;
+    return {
+        insertPosition,
+        text,
+    };
+}
+
+function buildTopLevelFocusTemplateBlock(
+    content: string,
+    blockRange: TextRange,
+    blockName: string,
+    placeholder: string,
+    x: number,
+    y: number,
+    lineEnding: string,
+): { insertPosition: number; text: string } {
+    const insertPosition = blockRange.end;
+    const blockIndent = getLineIndent(content, blockRange.start);
+    const indentUnit = inferIndentUnit(content, blockIndent, blockRange);
+    const childIndent = blockIndent + indentUnit;
+    const prefix = insertPosition >= content.length ? `${lineEnding}${lineEnding}` : `${lineEnding}${lineEnding}`;
+    const suffix = insertPosition >= content.length ? lineEnding : '';
+    const text =
+        `${prefix}${blockName} = {${lineEnding}` +
+        `${childIndent}id = ${placeholder}${lineEnding}` +
+        `${childIndent}icon = GFX${lineEnding}` +
+        `${childIndent}cost = 1${lineEnding}` +
+        `${lineEnding}` +
+        `${childIndent}x = ${x}${lineEnding}` +
+        `${childIndent}y = ${y}${lineEnding}` +
+        `${lineEnding}` +
+        `${childIndent}completion_reward = {${lineEnding}` +
+        `${childIndent}${indentUnit}log = "[GetLogRoot]: Focus Completed ${placeholder}"${lineEnding}` +
+        `${lineEnding}` +
+        `${childIndent}}${lineEnding}` +
+        `${blockIndent}}${suffix}`;
+    return {
+        insertPosition,
+        text,
+    };
+}
+
 function collectEditableFocuses(root: Node): FocusNodeMeta[] {
     if (!Array.isArray(root.value)) {
         return [];
@@ -153,6 +336,17 @@ function shiftFocusMeta(meta: FocusNodeMeta, offset: number): FocusNodeMeta {
         x: meta.x ? shiftScalarField(meta.x, offset) : undefined,
         y: meta.y ? shiftScalarField(meta.y, offset) : undefined,
         firstOffsetStart: meta.firstOffsetStart !== undefined ? meta.firstOffsetStart + offset : undefined,
+    };
+}
+
+function shiftTreeMeta(meta: FocusTreeCreateMeta, offset: number): FocusTreeCreateMeta {
+    if (offset === 0) {
+        return meta;
+    }
+
+    return {
+        ...meta,
+        sourceRange: meta.sourceRange ? shiftRange(meta.sourceRange, offset) : undefined,
     };
 }
 

@@ -134,6 +134,7 @@ async function renderFocusTrees(
             background: rgba(128, 128, 128, 0.2);
             text-align: center;
             pointer-events: none;
+            z-index: 0;
         `)}">Continuous focuses</div>`;
 
     return (
@@ -145,8 +146,8 @@ async function renderFocusTrees(
             top:0;
         `)}"></div>` +
         `<div id="focustreecontent" class="${styleTable.oneTimeStyle('focustreecontent', () => `top:40px;left:-20px;position:relative`)}">
-            <div id="focustreeplaceholder"></div>
-            <div id="inlaywindowplaceholder"></div>
+            <div id="focustreeplaceholder" class="${styleTable.oneTimeStyle('focustreeplaceholder', () => `position: relative; z-index: 2;`)}"></div>
+            <div id="inlaywindowplaceholder" class="${styleTable.oneTimeStyle('inlaywindowplaceholder', () => `position: relative; z-index: 3;`)}"></div>
             ${continuousFocusContent}
         </div>` +
         renderWarningContainer(styleTable) +

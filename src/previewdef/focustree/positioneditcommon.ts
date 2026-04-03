@@ -15,6 +15,8 @@ export interface FocusPositionOffsetMeta {
     triggerText?: string;
 }
 
+export type FocusTreeCreateKind = 'focus' | 'shared' | 'joint';
+
 export interface FocusPositionMeta {
     editKey: string;
     focusId: string;
@@ -31,6 +33,14 @@ export interface FocusPositionMeta {
     offsets: FocusPositionOffsetMeta[];
 }
 
+export interface FocusTreeCreateMeta {
+    editKey: string;
+    editable: boolean;
+    kind: FocusTreeCreateKind;
+    sourceFile: string;
+    sourceRange?: TextRange;
+}
+
 export interface ApplyFocusPositionEditMessage {
     command: 'applyFocusPositionEdit';
     focusId: string;
@@ -39,8 +49,20 @@ export interface ApplyFocusPositionEditMessage {
     documentVersion: number;
 }
 
-export type FocusPositionEditMessage = ApplyFocusPositionEditMessage;
+export interface CreateFocusTemplateAtPositionMessage {
+    command: 'createFocusTemplateAtPosition';
+    treeEditKey: string;
+    targetAbsoluteX: number;
+    targetAbsoluteY: number;
+    documentVersion: number;
+}
+
+export type FocusPositionEditMessage = ApplyFocusPositionEditMessage | CreateFocusTemplateAtPositionMessage;
 
 export function createFocusPositionEditKey(file: string, discriminator: string | number): string {
     return `focus:${file}:${discriminator}`;
+}
+
+export function createFocusTreeEditKey(file: string, kind: FocusTreeCreateKind, discriminator: string | number): string {
+    return `focus-tree:${file}:${kind}:${discriminator}`;
 }

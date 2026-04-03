@@ -1,18 +1,25 @@
 import { Node } from "../../hoiformat/hoiparser";
-import { FocusPositionMeta, ScalarFieldMeta, TextRange, createFocusPositionEditKey } from "./positioneditcommon";
+import { FocusPositionMeta, FocusTreeCreateMeta, ScalarFieldMeta, TextRange, createFocusPositionEditKey, createFocusTreeEditKey } from "./positioneditcommon";
 
 export interface FocusPositionFileMetadata {
     focuses: Record<string, FocusPositionMeta | undefined>;
+    focusTrees: FocusTreeCreateMeta[];
+    sharedTree?: FocusTreeCreateMeta;
+    jointTree?: FocusTreeCreateMeta;
 }
 
 export function collectFocusPositionFileMetadata(node: Node, filePath: string): FocusPositionFileMetadata {
     const result: FocusPositionFileMetadata = {
         focuses: {},
+        focusTrees: [],
     };
 
     if (!Array.isArray(node.value)) {
         return result;
     }
+
+    let lastSharedRange: TextRange | undefined;
+    let lastJointRange: TextRange | undefined;
 
     for (const child of node.value) {
         const childName = child.name?.toLowerCase();
@@ -21,6 +28,10 @@ export function collectFocusPositionFileMetadata(node: Node, filePath: string): 
         }
 
         if (childName === 'focus_tree') {
+            const treeMetadata = collectFocusTreeMetadata(child, filePath, result.focusTrees.length);
+            if (treeMetadata) {
+                result.focusTrees.push(treeMetadata);
+            }
             for (const focusNode of child.value.filter(isNamedBlock('focus'))) {
                 const metadata = collectFocusMetadata(focusNode, filePath);
                 if (metadata) {
@@ -35,10 +46,50 @@ export function collectFocusPositionFileMetadata(node: Node, filePath: string): 
             if (metadata) {
                 result.focuses[metadata.editKey] = metadata;
             }
+            const range = createNodeRange(child);
+            if (childName === 'shared_focus') {
+                lastSharedRange = range;
+            } else {
+                lastJointRange = range;
+            }
         }
     }
 
+    if (lastSharedRange) {
+        result.sharedTree = {
+            editKey: createFocusTreeEditKey(filePath, 'shared', 'top-level'),
+            editable: true,
+            kind: 'shared',
+            sourceFile: filePath,
+            sourceRange: lastSharedRange,
+        };
+    }
+
+    if (lastJointRange) {
+        result.jointTree = {
+            editKey: createFocusTreeEditKey(filePath, 'joint', 'top-level'),
+            editable: true,
+            kind: 'joint',
+            sourceFile: filePath,
+            sourceRange: lastJointRange,
+        };
+    }
+
     return result;
+}
+
+function collectFocusTreeMetadata(node: Node, filePath: string, index: number): FocusTreeCreateMeta | undefined {
+    if (!node.nameToken) {
+        return undefined;
+    }
+
+    return {
+        editKey: createFocusTreeEditKey(filePath, 'focus', index),
+        editable: true,
+        kind: 'focus',
+        sourceFile: filePath,
+        sourceRange: createNodeRange(node),
+    };
 }
 
 function collectFocusMetadata(node: Node, filePath: string): FocusPositionMeta | undefined {

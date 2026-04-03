@@ -10,7 +10,7 @@ import { useConditionInFocus } from "../../util/featureflags";
 import { normalizeNumberLike } from "../../util/hoi4gui/common";
 import { localize } from "../../util/i18n";
 import { parseInlayWindowRef } from "./inlay";
-import { FocusPositionMeta, createFocusPositionEditKey } from "./positioneditcommon";
+import { FocusPositionMeta, FocusTreeCreateMeta, createFocusPositionEditKey } from "./positioneditcommon";
 import { collectFocusPositionFileMetadata } from "./positioneditmetadata";
 
 export type FocusTreeKind = 'focus' | 'shared' | 'joint';
@@ -19,6 +19,7 @@ export interface FocusTree {
     id: string;
     kind: FocusTreeKind;
     focuses: Record<string, Focus>;
+    createTemplate?: FocusTreeCreateMeta;
     inlayWindowRefs: FocusTreeInlayRef[];
     inlayWindows: FocusTreeInlay[];
     inlayConditionExprs: ConditionItem[];
@@ -366,8 +367,18 @@ export function getFocusTree(node: Node, sharedFocusTrees: FocusTree[], filePath
     const file = convertFocusFileNodeToJson(node, constants);
     const trees = getFocusTreeWithFocusFile(file, sharedFocusTrees, filePath, constants);
     const metadata = collectFocusPositionFileMetadata(node, filePath);
+    let localFocusTreeIndex = 0;
 
     for (const tree of trees) {
+        if (tree.kind === 'focus' && Object.values(tree.focuses).some(focus => focus.file === filePath)) {
+            tree.createTemplate = metadata.focusTrees[localFocusTreeIndex];
+            localFocusTreeIndex++;
+        } else if (tree.kind === 'shared' && Object.values(tree.focuses).some(focus => focus.file === filePath)) {
+            tree.createTemplate = metadata.sharedTree;
+        } else if (tree.kind === 'joint' && Object.values(tree.focuses).some(focus => focus.file === filePath)) {
+            tree.createTemplate = metadata.jointTree;
+        }
+
         for (const focus of Object.values(tree.focuses)) {
             if (!focus.layout && focus.file === filePath) {
                 focus.layout = metadata.focuses[focus.layoutEditKey];

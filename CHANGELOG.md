@@ -4,7 +4,26 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.11] - 2026/04/03 - Latest
+## [0.13.14] - 2026/04/04 - Latest
+
+### Fixed
+* Keep the continuous-focus helper behind the rendered focus grid and fall back from stale persisted condition filters when they would otherwise open the preview as an empty canvas.
+
+## [0.13.13] - 2026/04/04
+
+### Changed
+* Expand the blank-space Focus Preview create template to the requested HOI4 scaffold with `icon`, `cost`, and a `completion_reward` log that reuses the new `TAG_FOCUS_ID` placeholder.
+
+## [0.13.12] - 2026/04/04
+
+### Added
+* Allow blank-space double-click creation in Focus Preview `Edit` mode, inserting a snapped focus template into the currently selected local focus tree and selecting the new `TAG_FOCUS_ID` placeholder for immediate typing.
+
+### Changed
+* Add stable tree-level edit metadata for local `focus_tree`, `shared_focus`, and `joint_focus` creation targets so imported dependency trees remain read-only.
+* Refresh the focus preview immediately after a created template is inserted by rerendering the webview from the updated document and skipping the delayed duplicate reload for that same version.
+
+## [0.13.11] - 2026/04/03
 
 ### Added
 * Reintroduce a minimal Focus Preview `Edit` toggle that lets you drag focuses defined in the current file and saves their `x`/`y` positions on mouseup.
