@@ -18,6 +18,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Split the crowded focus preview toolbar into two explicit rows and move the canvas offset down with it so the controls stay aligned instead of fighting for one compressed line.
 * Keep the `Conditions` label inline with its dropdown by preserving flex layout during toolbar visibility updates, and place the `Edit` button inside the same grouped rhythm as the other controls.
 * Leave extra blank canvas below the lowest rendered focus so edit-mode double-click creation can continue downward even when the current tree already reaches the bottom of the viewport.
+* Add a blank-canvas pan fallback in the focus preview so dragging empty space still scrolls reliably even when the visible canvas sits above the generic `#dragger` overlay.
 
 ## [0.13.18] - 2026/04/04
 

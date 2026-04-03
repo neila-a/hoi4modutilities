@@ -439,6 +439,30 @@ function isBlankCreateTarget(event: MouseEvent): boolean {
     return event.clientX >= contentRect.left && event.clientY >= contentRect.top;
 }
 
+function getBlankCanvasPanTarget(event: MouseEvent): HTMLElement | null {
+    const element = getElementAtPointIgnoringDragger(event.clientX, event.clientY)
+        ?? ((event.target as Node | null) instanceof HTMLElement ? event.target as HTMLElement : null);
+    if (!element || element.id === 'dragger') {
+        return null;
+    }
+
+    if (element.closest('[data-focus-id], .navigator, .toolbar-outer, #warnings-container, input, select, button, textarea, option, ul.select-dropdown, li')) {
+        return null;
+    }
+
+    const contentElement = document.getElementById('focustreecontent') as HTMLElement | null;
+    const contentRect = contentElement?.getBoundingClientRect();
+    if (!contentRect) {
+        return null;
+    }
+
+    if (event.clientX < contentRect.left || event.clientY < contentRect.top) {
+        return null;
+    }
+
+    return element;
+}
+
 function getAbsoluteGridPositionFromMouseEvent(event: MouseEvent): NumberPosition | undefined {
     const contentElement = document.getElementById('focustreecontent') as HTMLDivElement | null;
     if (!contentElement) {
@@ -485,6 +509,41 @@ function setupFocusTemplateCreateHandler() {
             targetAbsoluteY: targetPosition.y,
             documentVersion: focusPositionDocumentVersion,
         });
+    }, true);
+}
+
+function setupBlankCanvasPanFallback() {
+    document.addEventListener('mousedown', event => {
+        if (focusPositionEditMode || event.button !== 0 || event.defaultPrevented) {
+            return;
+        }
+
+        if (!getBlankCanvasPanTarget(event)) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const startingPageX = event.pageX;
+        const startingPageY = event.pageY;
+        const startingScrollX = window.pageXOffset;
+        const startingScrollY = window.pageYOffset;
+
+        const mouseMoveHandler = (moveEvent: MouseEvent) => {
+            window.scroll(
+                startingScrollX - (moveEvent.pageX - startingPageX),
+                startingScrollY - (moveEvent.pageY - startingPageY),
+            );
+        };
+
+        const mouseUpHandler = () => {
+            document.removeEventListener('mousemove', mouseMoveHandler, true);
+            document.removeEventListener('mouseup', mouseUpHandler, true);
+        };
+
+        document.addEventListener('mousemove', mouseMoveHandler, true);
+        document.addEventListener('mouseup', mouseUpHandler, true);
     }, true);
 }
 
@@ -1053,6 +1112,7 @@ window.addEventListener('load', tryRun(async function() {
 
     setupFocusPositionDragHandlers();
     setupFocusTemplateCreateHandler();
+    setupBlankCanvasPanFallback();
 
     const focusesElement = document.getElementById('focuses') as HTMLSelectElement | null;
     if (focusesElement) {
