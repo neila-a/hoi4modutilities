@@ -22,6 +22,7 @@ function canPreviewFocusTree(document: vscode.TextDocument) {
 class FocusTreePreview extends PreviewBase {
     private focusTreeLoader: FocusTreeLoader;
     private content: string | undefined;
+    private pendingLocalEditDocumentVersions = new Set<number>();
 
     constructor(uri: vscode.Uri, panel: vscode.WebviewPanel) {
         super(uri, panel);
@@ -34,6 +35,14 @@ class FocusTreePreview extends PreviewBase {
         const result = await renderFocusTreeFile(this.focusTreeLoader, document.uri, this.panel.webview, document.version);
         this.content = undefined;
         return result;
+    }
+
+    public override async onDocumentChange(document: vscode.TextDocument): Promise<void> {
+        if (this.pendingLocalEditDocumentVersions.delete(document.version)) {
+            return;
+        }
+
+        await super.onDocumentChange(document);
     }
 
     protected async onDidReceiveMessage(msg: FocusPositionEditMessage): Promise<boolean> {
@@ -64,6 +73,9 @@ class FocusTreePreview extends PreviewBase {
         }
 
         const updatedDocument = getDocumentByUri(this.uri);
+        if (updatedDocument) {
+            this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+        }
         await this.panel.webview.postMessage({
             command: 'focusPositionEditApplied',
             focusId: msg.focusId,

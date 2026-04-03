@@ -651,6 +651,10 @@ window.addEventListener('load', tryRun(async function() {
         if (message.focusId !== undefined && message.targetLocalX !== undefined && message.targetLocalY !== undefined) {
             updateFocusPositionAfterApply(message.focusId, message.targetLocalX, message.targetLocalY);
         }
+
+        void buildContent().then(() => {
+            retriggerSearch();
+        });
     });
 
     setupFocusPositionDragHandlers();
