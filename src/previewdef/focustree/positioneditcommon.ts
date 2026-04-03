@@ -58,7 +58,19 @@ export interface CreateFocusTemplateAtPositionMessage {
     documentVersion: number;
 }
 
-export type FocusPositionEditMessage = ApplyFocusPositionEditMessage | CreateFocusTemplateAtPositionMessage;
+export interface ApplyFocusLinkEditMessage {
+    command: 'applyFocusLinkEdit';
+    parentFocusId: string;
+    childFocusId: string;
+    targetLocalX: number;
+    targetLocalY: number;
+    documentVersion: number;
+}
+
+export type FocusPositionEditMessage =
+    | ApplyFocusPositionEditMessage
+    | CreateFocusTemplateAtPositionMessage
+    | ApplyFocusLinkEditMessage;
 
 export function createFocusPositionEditKey(file: string, discriminator: string | number): string {
     return `focus:${file}:${discriminator}`;

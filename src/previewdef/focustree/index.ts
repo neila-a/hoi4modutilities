@@ -6,7 +6,7 @@ import { PreviewProviderDef } from '../previewmanager';
 import { FocusTreeLoader } from './loader';
 import { getDocumentByUri, getRelativePathInWorkspace } from '../../util/vsccommon';
 import { FocusPositionEditMessage } from './positioneditcommon';
-import { buildCreateFocusTemplateWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
+import { buildCreateFocusTemplateWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
 import { localize } from '../../util/i18n';
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
@@ -46,7 +46,9 @@ class FocusTreePreview extends PreviewBase {
     }
 
     protected async onDidReceiveMessage(msg: FocusPositionEditMessage): Promise<boolean> {
-        if (msg.command !== 'applyFocusPositionEdit' && msg.command !== 'createFocusTemplateAtPosition') {
+        if (msg.command !== 'applyFocusPositionEdit'
+            && msg.command !== 'createFocusTemplateAtPosition'
+            && msg.command !== 'applyFocusLinkEdit') {
             return false;
         }
 
@@ -80,6 +82,53 @@ class FocusTreePreview extends PreviewBase {
             await this.panel.webview.postMessage({
                 command: 'focusPositionEditApplied',
                 focusId: msg.focusId,
+                targetLocalX: msg.targetLocalX,
+                targetLocalY: msg.targetLocalY,
+                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
+            });
+
+            return true;
+        }
+
+        if (msg.command === 'applyFocusLinkEdit') {
+            const { edit, error } = buildFocusLinkWorkspaceEdit(
+                document,
+                msg.parentFocusId,
+                msg.childFocusId,
+                msg.targetLocalX,
+                msg.targetLocalY,
+            );
+            if (error) {
+                await vscode.window.showErrorMessage(error);
+                return true;
+            }
+
+            if (!edit) {
+                await this.panel.webview.postMessage({
+                    command: 'focusLinkEditApplied',
+                    parentFocusId: msg.parentFocusId,
+                    childFocusId: msg.childFocusId,
+                    targetLocalX: msg.targetLocalX,
+                    targetLocalY: msg.targetLocalY,
+                    documentVersion: document.version,
+                });
+                return true;
+            }
+
+            const applied = await vscode.workspace.applyEdit(edit);
+            if (!applied) {
+                await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus link edit.'));
+                return true;
+            }
+
+            const updatedDocument = getDocumentByUri(this.uri);
+            if (updatedDocument) {
+                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+            }
+            await this.panel.webview.postMessage({
+                command: 'focusLinkEditApplied',
+                parentFocusId: msg.parentFocusId,
+                childFocusId: msg.childFocusId,
                 targetLocalX: msg.targetLocalX,
                 targetLocalY: msg.targetLocalY,
                 documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,

@@ -69,9 +69,12 @@ let currentRenderedExprs: ConditionItem[] = [];
 let focusPositionDragBindings: Array<{ element: HTMLElement; handler: (event: MouseEvent) => void }> = [];
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
 let suppressEditableFocusClickUntil = 0;
+let pendingFocusLinkParentId: string | undefined = undefined;
+let focusNavigateTimer: number | undefined = undefined;
 const xGridSize: number = (window as any).xGridSize;
 const yGridSize: number = (window as any).yGridSize ?? 130;
 const focusPositionDragThresholdPx = 4;
+const focusNavigateDelayMs = 220;
 let currentGridLeftPadding = 0;
 let currentGridTopPadding = 0;
 
@@ -102,6 +105,8 @@ function setFocusPositionEditMode(enabled: boolean) {
     focusPositionEditMode = enabled;
     setPreviewPanDisabled(enabled);
     setState({ focusPositionEditMode: enabled });
+    clearPendingFocusNavigate();
+    clearPendingFocusLink();
     updateFocusPositionEditUi();
 }
 
@@ -114,19 +119,28 @@ function updateFocusPositionEditUi() {
 
     document.querySelectorAll<HTMLElement>('[data-focus-id]').forEach(element => {
         const editable = element.dataset.focusEditable === 'true';
+        const isPendingParent = pendingFocusLinkParentId !== undefined && element.dataset.focusId === pendingFocusLinkParentId;
         element.style.cursor = focusPositionEditMode && editable ? 'grab' : 'pointer';
-        element.style.boxShadow = focusPositionEditMode && editable
-            ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
-            : '';
+        element.style.boxShadow = isPendingParent
+            ? '0 0 0 2px rgba(255, 196, 64, 0.95) inset'
+            : focusPositionEditMode && editable
+                ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
+                : '';
     });
 }
 
-function getEditableFocusElement(target: EventTarget | null): HTMLDivElement | null {
+function getFocusElement(target: EventTarget | null): HTMLDivElement | null {
     const focusElement = (target as HTMLElement | null)?.closest<HTMLDivElement>('[data-focus-id]');
-    if (!focusElement || focusElement.dataset.focusEditable !== 'true') {
-        return null;
-    }
+    return focusElement ?? null;
+}
 
+function getEditableFocusElement(target: EventTarget | null): HTMLDivElement | null {
+    const focusElement = getFocusElement(target);
+    return focusElement?.dataset.focusEditable === 'true' ? focusElement : null;
+}
+
+function getFocusElementAtPoint(clientX: number, clientY: number): HTMLDivElement | null {
+    const focusElement = getFocusElement(getElementAtPointIgnoringDragger(clientX, clientY));
     return focusElement;
 }
 
@@ -155,26 +169,249 @@ function getEditableFocusElementFromMouseEvent(event: MouseEvent): HTMLDivElemen
     return getEditableFocusElement(event.target) ?? getEditableFocusElementAtPoint(event.clientX, event.clientY);
 }
 
+function getFocusElementFromMouseEvent(event: MouseEvent): HTMLDivElement | null {
+    return getFocusElement(event.target) ?? getFocusElementAtPoint(event.clientX, event.clientY);
+}
+
+function clearPendingFocusNavigate() {
+    if (focusNavigateTimer !== undefined) {
+        window.clearTimeout(focusNavigateTimer);
+        focusNavigateTimer = undefined;
+    }
+}
+
+function navigateToFocusDefinition(focusElement: HTMLElement) {
+    const startStr = focusElement.getAttribute('start');
+    const endStr = focusElement.getAttribute('end');
+    const file = focusElement.getAttribute('file') ?? undefined;
+    const start = !startStr || startStr === 'undefined' ? undefined : parseInt(startStr, 10);
+    const end = !endStr ? undefined : parseInt(endStr, 10);
+    vscode.postMessage({
+        command: 'navigate',
+        start,
+        end,
+        file,
+    });
+}
+
+function scheduleFocusNavigate(focusElement: HTMLElement) {
+    clearPendingFocusNavigate();
+    focusNavigateTimer = window.setTimeout(() => {
+        focusNavigateTimer = undefined;
+        if (!focusPositionEditMode || pendingFocusLinkParentId !== undefined) {
+            return;
+        }
+
+        navigateToFocusDefinition(focusElement);
+    }, focusNavigateDelayMs);
+}
+
 function setupFocusPositionDragHandlers() {
     document.addEventListener('click', event => {
         if (!focusPositionEditMode) {
             return;
         }
 
-        const focusElement = getEditableFocusElementFromMouseEvent(event);
+        if (Date.now() <= suppressEditableFocusClickUntil) {
+            suppressEditableFocusClickUntil = 0;
+            clearPendingFocusNavigate();
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+        }
+
+        const focusElement = getFocusElementFromMouseEvent(event);
+        if (pendingFocusLinkParentId !== undefined) {
+            clearPendingFocusNavigate();
+            event.preventDefault();
+            event.stopPropagation();
+
+            if (!focusElement) {
+                clearPendingFocusLink();
+                return;
+            }
+
+            const parentFocusId = pendingFocusLinkParentId;
+            const childFocusId = focusElement.dataset.focusId;
+            clearPendingFocusLink();
+            if (!parentFocusId || !childFocusId || parentFocusId === childFocusId) {
+                return;
+            }
+
+            if (!currentRenderedFocusTree) {
+                return;
+            }
+
+            const childFocus = currentRenderedFocusTree.focuses[childFocusId];
+            const childAbsolutePosition = currentFocusPositions[childFocusId];
+            if (!childFocus || !childAbsolutePosition) {
+                return;
+            }
+
+            const linkedChildFocus: Focus = {
+                ...childFocus,
+                relativePositionId: parentFocusId,
+                prerequisite: childFocus.prerequisite,
+                exclusive: childFocus.exclusive,
+                icon: childFocus.icon,
+                offset: childFocus.offset,
+                inAllowBranch: childFocus.inAllowBranch,
+            };
+            const targetLocalPosition = getLocalPositionFromRenderedAbsolute(
+                linkedChildFocus,
+                currentRenderedFocusTree,
+                currentRenderedExprs,
+                childAbsolutePosition,
+            );
+
+            vscode.postMessage({
+                command: 'applyFocusLinkEdit',
+                parentFocusId,
+                childFocusId,
+                targetLocalX: targetLocalPosition.x,
+                targetLocalY: targetLocalPosition.y,
+                documentVersion: focusPositionDocumentVersion,
+            });
+            return;
+        }
+
         if (!focusElement) {
             return;
         }
 
-        if (Date.now() > suppressEditableFocusClickUntil) {
+        clearPendingFocusNavigate();
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.detail <= 1) {
+            scheduleFocusNavigate(focusElement);
+        }
+    }, true);
+
+    document.addEventListener('dblclick', event => {
+        if (!focusPositionEditMode) {
             return;
         }
 
-        suppressEditableFocusClickUntil = 0;
+        const focusElement = getFocusElementFromMouseEvent(event);
+        if (!focusElement) {
+            return;
+        }
+
+        const parentFocusId = focusElement.dataset.focusId;
+        if (!parentFocusId) {
+            return;
+        }
+
+        clearPendingFocusNavigate();
         event.preventDefault();
         event.stopPropagation();
+        startPendingFocusLink(parentFocusId, event.clientX, event.clientY);
     }, true);
 
+    document.addEventListener('mousemove', event => {
+        if (pendingFocusLinkParentId === undefined) {
+            return;
+        }
+
+        updatePendingFocusLinkTarget(event.clientX, event.clientY);
+    }, true);
+
+    document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && pendingFocusLinkParentId !== undefined) {
+            clearPendingFocusLink();
+        }
+    }, true);
+}
+
+function ensurePendingFocusLinkOverlay(): SVGSVGElement {
+    let overlay = document.getElementById('focus-link-overlay') as SVGSVGElement | null;
+    if (overlay) {
+        return overlay;
+    }
+
+    overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    overlay.id = 'focus-link-overlay';
+    overlay.setAttribute('width', '100%');
+    overlay.setAttribute('height', '100%');
+    overlay.style.position = 'fixed';
+    overlay.style.left = '0';
+    overlay.style.top = '0';
+    overlay.style.width = '100vw';
+    overlay.style.height = '100vh';
+    overlay.style.pointerEvents = 'none';
+    overlay.style.zIndex = '1000';
+    overlay.style.display = 'none';
+
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.id = 'focus-link-overlay-line';
+    line.setAttribute('stroke', '#ffc440');
+    line.setAttribute('stroke-width', '3');
+    line.setAttribute('stroke-linecap', 'round');
+    line.setAttribute('stroke-dasharray', '8 5');
+    overlay.appendChild(line);
+
+    document.body.appendChild(overlay);
+    return overlay;
+}
+
+function getFocusElementById(focusId: string): HTMLElement | undefined {
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-focus-id]'))
+        .find(element => element.dataset.focusId === focusId);
+}
+
+function getElementViewportCenter(element: HTMLElement): NumberPosition {
+    const rect = element.getBoundingClientRect();
+    return {
+        x: rect.left + rect.width / 2,
+        y: rect.top + rect.height / 2,
+    };
+}
+
+function refreshPendingFocusLinkOverlay(targetClientX?: number, targetClientY?: number) {
+    if (pendingFocusLinkParentId === undefined) {
+        return;
+    }
+
+    const parentElement = getFocusElementById(pendingFocusLinkParentId);
+    if (!parentElement) {
+        clearPendingFocusLink();
+        return;
+    }
+
+    const overlay = ensurePendingFocusLinkOverlay();
+    const line = overlay.querySelector('#focus-link-overlay-line') as SVGLineElement | null;
+    if (!line) {
+        return;
+    }
+
+    const parentCenter = getElementViewportCenter(parentElement);
+    const x2 = targetClientX ?? parentCenter.x;
+    const y2 = targetClientY ?? parentCenter.y;
+    line.setAttribute('x1', `${parentCenter.x}`);
+    line.setAttribute('y1', `${parentCenter.y}`);
+    line.setAttribute('x2', `${x2}`);
+    line.setAttribute('y2', `${y2}`);
+    overlay.style.display = 'block';
+}
+
+function startPendingFocusLink(parentFocusId: string, clientX: number, clientY: number) {
+    pendingFocusLinkParentId = parentFocusId;
+    refreshPendingFocusLinkOverlay(clientX, clientY);
+    updateFocusPositionEditUi();
+}
+
+function updatePendingFocusLinkTarget(clientX: number, clientY: number) {
+    refreshPendingFocusLinkOverlay(clientX, clientY);
+}
+
+function clearPendingFocusLink() {
+    pendingFocusLinkParentId = undefined;
+    const overlay = document.getElementById('focus-link-overlay') as SVGSVGElement | null;
+    if (overlay) {
+        overlay.style.display = 'none';
+    }
+
+    updateFocusPositionEditUi();
 }
 
 function isBlankCreateTarget(event: MouseEvent): boolean {
@@ -379,6 +616,32 @@ function updateFocusPositionAfterApply(focusId: string, targetLocalX: number, ta
     currentFocusPositions = recalculatedPositions;
 }
 
+function updateFocusLinkAfterApply(parentFocusId: string, childFocusId: string, targetLocalX?: number, targetLocalY?: number) {
+    if (!currentRenderedFocusTree) {
+        return;
+    }
+
+    const childFocus = currentRenderedFocusTree.focuses[childFocusId];
+    if (!childFocus) {
+        return;
+    }
+
+    if (!childFocus.prerequisite.some(group => group.includes(parentFocusId))) {
+        childFocus.prerequisite.push([parentFocusId]);
+    }
+    childFocus.relativePositionId = parentFocusId;
+    if (targetLocalX !== undefined && targetLocalY !== undefined) {
+        childFocus.x = targetLocalX;
+        childFocus.y = targetLocalY;
+    }
+
+    const recalculatedPositions: Record<string, NumberPosition> = {};
+    Object.values(currentRenderedFocusTree.focuses).forEach(currentFocus => {
+        getFocusPosition(currentFocus, recalculatedPositions, currentRenderedFocusTree!, currentRenderedExprs);
+    });
+    currentFocusPositions = recalculatedPositions;
+}
+
 async function buildContent() {
     const focusCheckState = getState().checkedFocuses ?? {};
     const checkedFocusesExprs = Object.keys(focusCheckState)
@@ -435,6 +698,9 @@ async function buildContent() {
         focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, fallbackAllowBranchOptionsValue, focusPosition, renderExprs)).filter((v): v is GridBoxItem => !!v);
     }
     currentRenderedFocusTree = focusTree;
+    if (pendingFocusLinkParentId !== undefined && !focusTree.focuses[pendingFocusLinkParentId]) {
+        clearPendingFocusLink();
+    }
     currentFocusPositions = { ...focusPosition };
     currentRenderedExprs = renderExprs;
 
@@ -751,14 +1017,35 @@ let retriggerSearch: () => void = () => {};
 
 window.addEventListener('load', tryRun(async function() {
     window.addEventListener('message', event => {
-        const message = event.data as { command?: string; documentVersion?: number; focusId?: string; targetLocalX?: number; targetLocalY?: number };
-        if (message.command !== 'focusPositionEditApplied') {
+        const message = event.data as {
+            command?: string;
+            documentVersion?: number;
+            focusId?: string;
+            targetLocalX?: number;
+            targetLocalY?: number;
+            parentFocusId?: string;
+            childFocusId?: string;
+        };
+        if (message.command !== 'focusPositionEditApplied' && message.command !== 'focusLinkEditApplied') {
             return;
         }
 
         focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
-        if (message.focusId !== undefined && message.targetLocalX !== undefined && message.targetLocalY !== undefined) {
+        if (message.command === 'focusPositionEditApplied'
+            && message.focusId !== undefined
+            && message.targetLocalX !== undefined
+            && message.targetLocalY !== undefined) {
             updateFocusPositionAfterApply(message.focusId, message.targetLocalX, message.targetLocalY);
+        }
+        if (message.command === 'focusLinkEditApplied'
+            && message.parentFocusId !== undefined
+            && message.childFocusId !== undefined) {
+            updateFocusLinkAfterApply(
+                message.parentFocusId,
+                message.childFocusId,
+                message.targetLocalX,
+                message.targetLocalY,
+            );
         }
 
         void buildContent().then(() => {

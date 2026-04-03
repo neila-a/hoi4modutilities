@@ -13,6 +13,10 @@ interface FocusNodeMeta {
     sourceRange: TextRange;
     x?: ScalarFieldMeta;
     y?: ScalarFieldMeta;
+    relativePositionId?: ScalarFieldMeta;
+    currentRelativePositionId?: string;
+    prerequisiteIds: string[];
+    linkInsertAnchorStart?: number;
     firstOffsetStart?: number;
 }
 
@@ -29,6 +33,11 @@ export interface FocusPositionTextChangeResult {
 export interface CreateFocusTemplateTextChangeResult {
     changes?: FocusPositionTextChange[];
     placeholderRange?: TextRange;
+    error?: string;
+}
+
+export interface FocusLinkTextChangeResult {
+    changes?: FocusPositionTextChange[];
     error?: string;
 }
 
@@ -180,6 +189,76 @@ export function buildCreateFocusTemplateWorkspaceEdit(
     };
 }
 
+export function buildFocusLinkTextChanges(
+    content: string,
+    parentFocusId: string,
+    childFocusId: string,
+    targetLocalX?: number,
+    targetLocalY?: number,
+): FocusLinkTextChangeResult {
+    if (parentFocusId === childFocusId) {
+        return { error: 'A focus cannot be linked to itself.' };
+    }
+
+    const bomOffset = content.startsWith('\uFEFF') ? 1 : 0;
+    const parseContent = bomOffset > 0 ? content.slice(bomOffset) : content;
+    const root = parseHoi4File(parseContent);
+    const matches = collectEditableFocuses(root)
+        .map(meta => shiftFocusMeta(meta, bomOffset))
+        .filter(meta => meta.focusId === childFocusId);
+    if (matches.length === 0) {
+        return { error: `Focus ${childFocusId} is not editable in the current file.` };
+    }
+
+    if (matches.length > 1) {
+        return { error: `Focus ${childFocusId} is ambiguous in the current file.` };
+    }
+
+    const child = matches[0];
+    const lineEnding = detectLineEnding(content);
+    const changes: FocusPositionTextChange[] = [];
+
+    if (targetLocalX !== undefined && targetLocalY !== undefined) {
+        ensureScalarField(changes, content, child.sourceRange, child.x, 'x', `${Math.round(targetLocalX)}`, lineEnding, child.firstOffsetStart);
+        ensureScalarField(changes, content, child.sourceRange, child.y, 'y', `${Math.round(targetLocalY)}`, lineEnding, child.firstOffsetStart);
+    }
+    ensurePrerequisiteLink(changes, content, child, parentFocusId, lineEnding);
+    ensureRelativePositionIdLink(changes, content, child, parentFocusId, lineEnding);
+
+    return {
+        changes: dedupeChanges(changes),
+    };
+}
+
+export function buildFocusLinkWorkspaceEdit(
+    document: vscode.TextDocument,
+    parentFocusId: string,
+    childFocusId: string,
+    targetLocalX?: number,
+    targetLocalY?: number,
+): { edit?: vscode.WorkspaceEdit; error?: string } {
+    const result = buildFocusLinkTextChanges(document.getText(), parentFocusId, childFocusId, targetLocalX, targetLocalY);
+    if (result.error) {
+        return { error: result.error };
+    }
+
+    const changes = result.changes ?? [];
+    if (changes.length === 0) {
+        return {};
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    for (const change of changes) {
+        edit.replace(
+            document.uri,
+            new vscode.Range(document.positionAt(change.range.start), document.positionAt(change.range.end)),
+            change.text,
+        );
+    }
+
+    return { edit };
+}
+
 function createFocusTemplateInsertionChange(
     content: string,
     treeMeta: FocusTreeCreateMeta,
@@ -325,6 +404,10 @@ function collectFocusMeta(node: Node): FocusNodeMeta | undefined {
         sourceRange: createNodeRange(node),
         x: collectScalarField(node, 'x'),
         y: collectScalarField(node, 'y'),
+        relativePositionId: collectScalarField(node, 'relative_position_id'),
+        currentRelativePositionId: readStringChildValue(node, 'relative_position_id'),
+        prerequisiteIds: collectPrerequisiteIds(node),
+        linkInsertAnchorStart: findLinkInsertAnchorStart(node),
         firstOffsetStart: findFirstOffsetStart(node),
     };
 }
@@ -339,7 +422,9 @@ function shiftFocusMeta(meta: FocusNodeMeta, offset: number): FocusNodeMeta {
         sourceRange: shiftRange(meta.sourceRange, offset),
         x: meta.x ? shiftScalarField(meta.x, offset) : undefined,
         y: meta.y ? shiftScalarField(meta.y, offset) : undefined,
+        relativePositionId: meta.relativePositionId ? shiftScalarField(meta.relativePositionId, offset) : undefined,
         firstOffsetStart: meta.firstOffsetStart !== undefined ? meta.firstOffsetStart + offset : undefined,
+        linkInsertAnchorStart: meta.linkInsertAnchorStart !== undefined ? meta.linkInsertAnchorStart + offset : undefined,
     };
 }
 
@@ -411,6 +496,52 @@ function ensureScalarField(
     });
 }
 
+function ensurePrerequisiteLink(
+    changes: FocusPositionTextChange[],
+    content: string,
+    focus: FocusNodeMeta,
+    parentFocusId: string,
+    lineEnding: string,
+): void {
+    if (focus.prerequisiteIds.includes(parentFocusId)) {
+        return;
+    }
+
+    const insertPosition = getLinkInsertPosition(content, focus);
+    const { childIndent } = getBlockIndentation(content, focus.sourceRange);
+    changes.push({
+        range: { start: insertPosition, end: insertPosition },
+        text: `${childIndent}prerequisite = { focus = ${parentFocusId} }${lineEnding}`,
+    });
+}
+
+function ensureRelativePositionIdLink(
+    changes: FocusPositionTextChange[],
+    content: string,
+    focus: FocusNodeMeta,
+    parentFocusId: string,
+    lineEnding: string,
+): void {
+    if (focus.relativePositionId) {
+        if (focus.currentRelativePositionId === parentFocusId) {
+            return;
+        }
+
+        changes.push({
+            range: focus.relativePositionId.valueRange,
+            text: parentFocusId,
+        });
+        return;
+    }
+
+    const insertPosition = getLinkInsertPosition(content, focus);
+    const { childIndent } = getBlockIndentation(content, focus.sourceRange);
+    changes.push({
+        range: { start: insertPosition, end: insertPosition },
+        text: `${childIndent}relative_position_id = ${parentFocusId}${lineEnding}`,
+    });
+}
+
 function dedupeChanges(changes: FocusPositionTextChange[]): FocusPositionTextChange[] {
     const seen = new Map<string, FocusPositionTextChange>();
     for (const change of changes) {
@@ -452,18 +583,68 @@ function findFirstOffsetStart(node: Node): number | undefined {
     return offsetNode?.nameToken?.start ?? offsetNode?.valueStartToken?.start ?? undefined;
 }
 
+function findLinkInsertAnchorStart(node: Node): number | undefined {
+    if (!Array.isArray(node.value)) {
+        return undefined;
+    }
+
+    const anchorNode = node.value.find(child => {
+        const childName = child.name?.toLowerCase();
+        return childName === 'relative_position_id'
+            || childName === 'x'
+            || childName === 'y'
+            || childName === 'offset'
+            || childName === 'completion_reward'
+            || childName === 'mutually_exclusive'
+            || childName === 'allow_branch';
+    });
+    return anchorNode?.nameToken?.start ?? anchorNode?.valueStartToken?.start ?? undefined;
+}
+
+function collectPrerequisiteIds(node: Node): string[] {
+    if (!Array.isArray(node.value)) {
+        return [];
+    }
+
+    const result = new Set<string>();
+    node.value
+        .filter(child => child.name?.toLowerCase() === 'prerequisite')
+        .forEach(child => collectFocusReferenceIds(child, result));
+    return Array.from(result);
+}
+
+function collectFocusReferenceIds(node: Node, result: Set<string>): void {
+    const nodeName = node.name?.toLowerCase();
+    if (nodeName === 'focus') {
+        const focusId = readNodeStringValue(node);
+        if (focusId) {
+            result.add(focusId);
+        }
+    }
+
+    if (!Array.isArray(node.value)) {
+        return;
+    }
+
+    node.value.forEach(child => collectFocusReferenceIds(child, result));
+}
+
 function readStringChildValue(node: Node, fieldName: string): string | undefined {
     const child = findNamedChild(node, fieldName);
     if (!child) {
         return undefined;
     }
 
-    if (typeof child.value === 'string') {
-        return child.value;
+    return readNodeStringValue(child);
+}
+
+function readNodeStringValue(node: Node): string | undefined {
+    if (typeof node.value === 'string') {
+        return node.value;
     }
 
-    if (typeof child.value === 'object' && child.value !== null && 'name' in child.value) {
-        return child.value.name;
+    if (typeof node.value === 'object' && node.value !== null && 'name' in node.value) {
+        return node.value.name;
     }
 
     return undefined;
@@ -484,6 +665,12 @@ function getLineStart(content: string, index: number): number {
 function getBlockClosingLineStart(content: string, blockRange: TextRange): number {
     const closingBraceIndex = Math.max(blockRange.start, blockRange.end - 1);
     return getLineStart(content, closingBraceIndex);
+}
+
+function getLinkInsertPosition(content: string, focus: FocusNodeMeta): number {
+    return focus.linkInsertAnchorStart !== undefined
+        ? getLineStart(content, focus.linkInsertAnchorStart)
+        : getBlockClosingLineStart(content, focus.sourceRange);
 }
 
 function getLineIndent(content: string, index: number): string {

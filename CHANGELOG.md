@@ -4,7 +4,17 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.19] - 2026/04/04 - Latest
+## [0.13.21] - 2026/04/04 - Latest
+
+### Fixed
+* Preserve a child's rendered position when applying a new focus link by recalculating and saving local `x` and `y` together with the new `relative_position_id`.
+
+## [0.13.20] - 2026/04/04
+
+### Added
+* Add edit-mode focus linking: double-click an existing focus to start a parent link line, then click another focus to write the child focus's `prerequisite` and `relative_position_id` back into the current document.
+
+## [0.13.19] - 2026/04/04
 
 ### Fixed
 * Snap blank-space create coordinates to the grid cell that contains the click, preventing focus templates from appearing one column or row to the side when clicking near slot edges.

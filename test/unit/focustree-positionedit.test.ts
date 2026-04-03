@@ -20,7 +20,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const { getFocusTree } = require('../../src/previewdef/focustree/schema') as typeof import('../../src/previewdef/focustree/schema');
-const { buildFocusPositionTextChanges, buildCreateFocusTemplateTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
+const { buildFocusPositionTextChanges, buildFocusLinkTextChanges, buildCreateFocusTemplateTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
 const { getFocusPosition, getLocalPositionFromRenderedAbsolute } = require('../../src/previewdef/focustree/positioning') as typeof import('../../src/previewdef/focustree/positioning');
 
 describe('focus tree position edit helpers', () => {
@@ -111,6 +111,91 @@ describe('focus tree position edit helpers', () => {
 
         const localPosition = getLocalPositionFromRenderedAbsolute(root!, focusTree!, [], { x: 10, y: 20 });
         assert.deepStrictEqual(localPosition, { x: 7, y: 16 });
+    });
+
+    it('inserts prerequisite and relative_position_id for a newly linked child focus while updating local x and y', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = CHILD
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 9, 11);
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(updated, /id = CHILD[\s\S]*?prerequisite = \{ focus = ROOT \}[\s\S]*?relative_position_id = ROOT[\s\S]*?x = 9[\s\S]*?y = 11/);
+    });
+
+    it('adds a new prerequisite while replacing an existing relative_position_id target and local coordinates', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = OLD_PARENT
+        x = 1
+        y = 1
+    }
+    focus = {
+        id = CHILD
+        prerequisite = { focus = OLD_PARENT }
+        relative_position_id = OLD_PARENT
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 7, 8);
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(updated, /id = CHILD[\s\S]*?prerequisite = \{ focus = OLD_PARENT \}[\s\S]*?prerequisite = \{ focus = ROOT \}[\s\S]*?relative_position_id = ROOT[\s\S]*?x = 7[\s\S]*?y = 8/);
+    });
+
+    it('does not duplicate an existing parent link when the child is already linked', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = CHILD
+        prerequisite = { focus = ROOT }
+        relative_position_id = ROOT
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD');
+
+        assert.ifError(result.error);
+        assert.strictEqual(result.changes?.length ?? 0, 0);
+    });
+
+    it('rejects invalid link requests such as self-links or non-local child focuses', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+}`;
+        const selfLink = buildFocusLinkTextChanges(content, 'ROOT', 'ROOT');
+        const importedChild = buildFocusLinkTextChanges(content, 'ROOT', 'IMPORTED_CHILD');
+
+        assert.match(selfLink.error ?? '', /cannot be linked to itself/i);
+        assert.match(importedChild.error ?? '', /not editable/);
     });
 
     it('creates the requested full focus template inside the selected local focus tree with a blank line separator and tag-derived prefix', () => {

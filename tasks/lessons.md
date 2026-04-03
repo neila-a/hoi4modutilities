@@ -34,3 +34,4 @@
 - When the focus preview background visually extends beyond the actual gridbox DOM bounds, do not require blank-space clicks to land inside a specific container box. Exclude known interactive regions instead, then allow the rest of the canvas to create.
 - When generated placeholder ids can remain unchanged across multiple create operations, do not reuse the same placeholder verbatim. Pick a unique id like `TAG_FOCUS_ID_2` from the current file state so later edit paths do not fail with ambiguous focus ids.
 - When converting preview pixel positions into HOI4 grid coordinates for create-on-click flows, do not use nearest-cell rounding. Use the containing cell instead, or clicks on the right half of a slot will create in the adjacent column.
+- When changing a focus's `relative_position_id` from the preview, do not write only the new parent id. Recalculate and save the child focus's local `x` and `y` against that new parent so the rendered position does not jump.
