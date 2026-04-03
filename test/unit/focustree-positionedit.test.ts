@@ -226,7 +226,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?log = "\[GetLogRoot\]: Focus Completed MEO_FOCUS_ID"[\s\S]*?\n    \}\n\}/);
+        assert.match(updated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 5[\s\S]*?y = 6[\s\S]*?completion_reward = \{\s*\n\s*\}\n    \}\n\}/);
     });
 
     it('creates the requested full shared focus template after the last local shared focus block', () => {
@@ -242,7 +242,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(result.error);
         const updated = applyTextChanges(content, result.changes ?? []);
 
-        assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\n\nshared_focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{[\s\S]*?log = "\[GetLogRoot\]: Focus Completed TAG_FOCUS_ID"[\s\S]*?\}\n\}\n\njoint_focus = \{/);
+        assert.match(updated, /shared_focus = \{[\s\S]*?id = SHARED_ROOT[\s\S]*?\}\n\nshared_focus = \{[\s\S]*?id = TAG_FOCUS_ID[\s\S]*?icon = GFX[\s\S]*?cost = 1[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{\s*\n\s*\}\n\}\n\njoint_focus = \{/);
     });
 
     it('returns a placeholder range that still points at the generated tag-based focus id in BOM files', () => {
@@ -302,8 +302,7 @@ describe('focus tree position edit helpers', () => {
         assert.ifError(second.error);
         const twiceUpdated = applyTextChanges(onceUpdated, second.changes ?? []);
 
-        assert.match(twiceUpdated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID_2[\s\S]*?x = 7[\s\S]*?y = 8/);
-        assert.match(twiceUpdated, /log = "\[GetLogRoot\]: Focus Completed MEO_FOCUS_ID_2"/);
+        assert.match(twiceUpdated, /id = ROOT[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID[\s\S]*?\n    \}\n\n    focus = \{[\s\S]*?id = MEO_FOCUS_ID_2[\s\S]*?x = 7[\s\S]*?y = 8[\s\S]*?completion_reward = \{\s*\n\s*\}\n    \}/);
     });
 
     it('rejects create requests for imported or unknown tree edit keys', () => {

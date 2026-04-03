@@ -215,7 +215,7 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
         </div>`;
 
     const editToggle = `
-        <div class="${styleTable.style('toolbarIconGroup', () => `display:flex; align-items:center; margin-left:auto;`) }">
+        <div class="${styleTable.style('toolbarIconGroup', () => `display:flex; align-items:center;`) }">
             <button
                 id="focus-position-edit"
                 title="${localize('TODO', 'Toggle focus position editing')}"

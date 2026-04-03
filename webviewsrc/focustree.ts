@@ -199,6 +199,16 @@ function ensureFocusContextMenu(): HTMLDivElement {
     menu.style.border = '1px solid var(--vscode-menu-border, var(--vscode-panel-border))';
     menu.style.boxShadow = '0 4px 18px rgba(0, 0, 0, 0.35)';
     menu.style.zIndex = '1100';
+    menu.addEventListener('mousedown', event => {
+        event.stopPropagation();
+    });
+    menu.addEventListener('click', event => {
+        event.stopPropagation();
+    });
+    menu.addEventListener('contextmenu', event => {
+        event.preventDefault();
+        event.stopPropagation();
+    });
 
     const deleteItem = document.createElement('button');
     deleteItem.type = 'button';
@@ -218,8 +228,10 @@ function ensureFocusContextMenu(): HTMLDivElement {
     deleteItem.addEventListener('mouseleave', () => {
         deleteItem.style.background = 'transparent';
     });
-    deleteItem.addEventListener('click', () => {
-        const focusId = focusContextMenuTargetId;
+    deleteItem.addEventListener('mousedown', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        const focusId = deleteItem.dataset.focusId ?? focusContextMenuTargetId;
         hideFocusContextMenu();
         if (!focusId) {
             return;
@@ -241,6 +253,11 @@ function hideFocusContextMenu() {
     focusContextMenuTargetId = undefined;
     const menu = document.getElementById('focus-context-menu') as HTMLDivElement | null;
     if (menu) {
+        delete menu.dataset.focusId;
+        const deleteButton = menu.querySelector('button') as HTMLButtonElement | null;
+        if (deleteButton) {
+            delete deleteButton.dataset.focusId;
+        }
         menu.style.display = 'none';
     }
 }
@@ -248,6 +265,11 @@ function hideFocusContextMenu() {
 function showFocusContextMenu(focusId: string, clientX: number, clientY: number) {
     const menu = ensureFocusContextMenu();
     focusContextMenuTargetId = focusId;
+    menu.dataset.focusId = focusId;
+    const deleteButton = menu.querySelector('button') as HTMLButtonElement | null;
+    if (deleteButton) {
+        deleteButton.dataset.focusId = focusId;
+    }
     menu.style.left = '0';
     menu.style.top = '0';
     menu.style.display = 'block';
@@ -312,7 +334,10 @@ function setupFocusPositionDragHandlers() {
     }, true);
 
     document.addEventListener('click', event => {
-        hideFocusContextMenu();
+        const target = event.target as HTMLElement | null;
+        if (!target?.closest('#focus-context-menu')) {
+            hideFocusContextMenu();
+        }
 
         if (!focusPositionEditMode) {
             return;
@@ -628,7 +653,7 @@ function setupFocusTemplateCreateHandler() {
 
 function setupBlankCanvasPanFallback() {
     document.addEventListener('mousedown', event => {
-        if (focusPositionEditMode || event.button !== 0 || event.defaultPrevented) {
+        if (event.button !== 0 || event.defaultPrevented) {
             return;
         }
 
@@ -638,7 +663,7 @@ function setupBlankCanvasPanFallback() {
 
         event.preventDefault();
         event.stopPropagation();
-        startPreviewPan(event.pageX, event.pageY);
+        startPreviewPan(event.pageX, event.pageY, true);
     }, true);
 }
 

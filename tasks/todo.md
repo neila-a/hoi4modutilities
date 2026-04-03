@@ -1,18 +1,19 @@
-# HOI4 Mod Utilities Focus Preview Edit Icon Toolbar Todo
+# HOI4 Mod Utilities Focus Preview Edit-Mode Pan And Template Cleanup Todo
 
 ## Plan
-- [x] Convert the `Edit` toggle into a warning-style icon button
-- [x] Move the icon to the far right of the first toolbar row without disturbing the remaining control order
+- [x] Reproduce why blank-space panning drops out in `Edit` mode and identify the broken input gate
+- [x] Restore blank-canvas screen movement in `Edit` mode without breaking focus drag or double-click create
+- [x] Remove the generated `log = ...` line from focus templates and update regression tests
 - [x] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
 - [x] Record review results and the final packaged VSIX name
 
 ## Notes
-- User request: make `Edit` an icon button like warnings and place it at the far right of the first row.
-- This is a toolbar-only presentation change; edit-mode behavior itself should remain unchanged.
-- This should stay within the existing consolidated `0.13.19` release line unless a separate release is explicitly requested.
+- User report: in `Edit` mode, dragging blank space to move the preview feels blocked again.
+- Follow-up request: generated focus templates should no longer include the `log = ...` line inside `completion_reward`.
+- Keep the current consolidated `0.13.19` release line unless the user asks for a separate release number.
 
 ## Review
-- `src/previewdef/focustree/contentbuilder.ts` now renders `Edit` as a codicon button, removes its text label, and pushes it to the far right of the first toolbar row with an auto-margin icon group.
-- `webviewsrc/focustree.ts` now styles the active edit state with icon-button color and background highlighting instead of relying on text weight, which no longer applies once the label is gone.
+- `webviewsrc/util/common.ts` now lets preview-owned blank-canvas pan sessions opt out of the global `disablePreviewPan` guard, and `webviewsrc/focustree.ts` uses that path so blank-space dragging continues to scroll the preview even while `Edit` mode keeps the shared `#dragger` layer disabled for node dragging.
+- `src/previewdef/focustree/positioneditservice.ts` now generates `completion_reward = {}` without the old `log = ...` line, and `test/unit/focustree-positionedit.test.ts` was updated so the create-template regressions assert the new scaffold shape.
 - Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
 - Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.19.vsix`.

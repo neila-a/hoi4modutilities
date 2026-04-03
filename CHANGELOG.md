@@ -22,7 +22,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Add a blank-canvas pan fallback in the focus preview so dragging empty space still scrolls reliably even when the visible canvas sits above the generic `#dragger` overlay.
 * Remove local `prerequisite` and `relative_position_id` references automatically when deleting a focus from the preview, so linked child focuses do not keep stale dependencies on the deleted node.
 * Reuse the same preview-pan session for blank-canvas fallback drags as the original `#dragger` path, restoring smoother empty-space panning while keeping the missed-drag fix.
-* Restyle the focus preview `Edit` toggle as an icon button and pin it to the far right of the first toolbar row instead of leaving it inline with the left-hand text controls.
+* Restyle the focus preview `Edit` toggle as an icon button and anchor it immediately to the right of the `Search` box on the first toolbar row.
 
 ## [0.13.18] - 2026/04/04
 

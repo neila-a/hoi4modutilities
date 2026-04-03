@@ -44,8 +44,8 @@ export function setPreviewPanDisabled(disabled: boolean): void {
     }
 }
 
-export function startPreviewPan(pageX: number, pageY: number): void {
-    if (isPreviewPanDisabled()) {
+export function startPreviewPan(pageX: number, pageY: number, force = false): void {
+    if (!force && isPreviewPanDisabled()) {
         previewPanPressed = false;
         return;
     }

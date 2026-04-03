@@ -378,7 +378,6 @@ function buildNestedFocusTemplateBlock(
     const { childIndent } = getBlockIndentation(content, blockRange);
     const indentUnit = inferIndentUnit(content, getLineIndent(content, blockRange.start), blockRange);
     const nestedIndent = childIndent + indentUnit;
-    const rewardIndent = nestedIndent + indentUnit;
     const separator = getBlankLineSeparatorBeforeInsert(content, insertPosition, lineEnding);
     const text =
         `${separator}${childIndent}${blockName} = {${lineEnding}` +
@@ -390,8 +389,6 @@ function buildNestedFocusTemplateBlock(
         `${nestedIndent}y = ${y}${lineEnding}` +
         `${lineEnding}` +
         `${nestedIndent}completion_reward = {${lineEnding}` +
-        `${rewardIndent}log = "[GetLogRoot]: Focus Completed ${placeholder}"${lineEnding}` +
-        `${lineEnding}` +
         `${nestedIndent}}${lineEnding}` +
         `${childIndent}}${lineEnding}`;
     return {
@@ -425,8 +422,6 @@ function buildTopLevelFocusTemplateBlock(
         `${childIndent}y = ${y}${lineEnding}` +
         `${lineEnding}` +
         `${childIndent}completion_reward = {${lineEnding}` +
-        `${childIndent}${indentUnit}log = "[GetLogRoot]: Focus Completed ${placeholder}"${lineEnding}` +
-        `${lineEnding}` +
         `${childIndent}}${lineEnding}` +
         `${blockIndent}}${suffix}`;
     return {
