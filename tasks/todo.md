@@ -1,22 +1,20 @@
-# HOI4 Mod Utilities CI Failure Triage Todo
+# HOI4 Mod Utilities UI Test CI Fix Todo
 
 ## Plan
-- [x] Confirm the actual failing GitHub Actions step instead of relying on Copilot's guess
-- [x] Reproduce the failing `Verify #39` commit under the workflow's Node 20 runtime in an isolated checkout
-- [x] Decide whether a code/workflow fix is needed or whether the current evidence only disproves the Copilot diagnosis
-- [x] Record the investigation result, evidence, and any remaining blind spots
+- [x] Confirm the real `test-ui` CI failure from the user-provided GitHub Actions log
+- [x] Update the UI-test build path so fresh checkouts produce the extension bundle before launching `vscode-test`
+- [x] Document the fix rationale and capture the user-correction lesson
+- [x] Run focused verification for compile/bundle steps and record any remaining local environment limits
 
 ## Notes
-- The failing GitHub Actions run is `Verify #39` for commit `191d77b`.
-- GitHub metadata already confirms the failing step is `Run unit verification`; later steps were skipped.
-- Local baseline on the current checkout already shows `npm run compile-ts` and `npm run test:unit` passing, including under `Node 20`.
+- The GitHub Actions failure is in `npm run test-ui`, not `test:unit`.
+- The actual activation failure is `Cannot find module '...\\dist\\extension.js'`, which then causes missing-command and timeout follow-on failures.
+- `compile-ts` only creates the `out/` test artifacts; the extension manifest points `main` at `dist/extension.js`, so UI tests need a webpack build as well.
 
 ## Review
-- GitHub Actions metadata for `Verify #39` (`191d77b`) and `Verify #41` (`5f379e9`) confirms the real failing step was `Run unit verification`; `Compile TypeScript` and `Run lint` succeeded and later steps were skipped.
-- Copilot's explanation was only partially right: it was correct that the failure sat in `npm run test:unit`, but the broad guesses about missing `out/` output or incomplete compilation were not the real root cause.
-- An isolated fresh worktree for `191d77b` reproduced the unit-test failure, and a fresh worktree for current `HEAD` reproduced the same class of failure on Windows checkout line endings.
-- The actionable root cause was a CRLF-sensitive regex in `test/unit/focustree-positionedit.test.ts` for the shared-focus template assertion. Fresh Windows-style checkouts produced `\r\n`, while the test only allowed `\n`.
-- Updated that assertion to accept both `LF` and `CRLF` using `\r?\n`, which keeps the behavior check intact without changing product code.
-- Verification passed on the main checkout: `npm run compile-ts` and `npm run test:unit`.
-- Verification also passed in a fresh detached `HEAD` worktree after the same test fix, which is the closest local reproduction of the GitHub Actions Windows checkout path.
-- I did not rerun the actual GitHub Actions workflow from here, so final confirmation still depends on the next remote CI run.
+- Updated `package.json` so `npm run test-ui` now runs `compile-ts`, then `webpack`, then `vscode-test`. This ensures fresh checkouts build `dist/extension.js` and `static/*` before the VS Code integration harness loads the development extension.
+- Updated `src/extension.ts` to keep the dev-only `server.hoi4modutilities.test` command registered without requiring the missing `./util/debug.shouldignore` module. The command now surfaces a simple informational message instead of crashing webpack resolution.
+- Added a lesson to `tasks/lessons.md` capturing the user correction pattern: when the CI log explicitly says `dist/extension.js` is missing, fix the build path first instead of chasing downstream command/time-out symptoms.
+- Focused verification passed: `npm run compile-ts`, `npm run webpack`, and `npm run test:unit`.
+- `npm run test-ui` now gets past the original missing-bundle failure, downloads VS Code, and only then stops on the known local environment issue `spawn EPERM`. In other words, the prior `dist/extension.js` activation failure from GitHub Actions is no longer reproduced in this session.
+- Remote GitHub Actions still needs one rerun for end-to-end confirmation in the actual CI environment.
