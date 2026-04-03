@@ -1,4 +1,4 @@
-import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, enableZoom } from "./util/common";
+import { getState, setState, arrayToMap, subscribeNavigators, scrollToState, tryRun, enableZoom, setPreviewPanDisabled } from "./util/common";
 import { DivDropdown } from "./util/dropdown";
 import { difference, minBy } from "lodash";
 import { renderGridBoxCommon, GridBoxItem, GridBoxConnection } from "../src/util/hoi4gui/gridboxcommon";
@@ -9,6 +9,8 @@ import { NumberPosition } from "../src/util/common";
 import { GridBoxType } from "../src/hoiformat/gui";
 import { toNumberLike } from "../src/hoiformat/schema";
 import { Checkbox } from "./util/checkbox";
+import { vscode } from "./util/vscode";
+import { getFocusPosition, getLocalPositionFromRenderedAbsolute } from "../src/previewdef/focustree/positioning";
 
 function showBranch(visibility: boolean, optionClass: string) {
     const elements = document.getElementsByClassName(optionClass);
@@ -60,6 +62,12 @@ let allowBranches: DivDropdown | undefined = undefined;
 let conditions: DivDropdown | undefined = undefined;
 let inlayConditions: DivDropdown | undefined = undefined;
 let checkedFocuses: Record<string, Checkbox> = {};
+let focusPositionEditMode: boolean = !!getState().focusPositionEditMode;
+let currentRenderedFocusTree: FocusTree | undefined = undefined;
+let currentFocusPositions: Record<string, NumberPosition> = {};
+let currentRenderedExprs: ConditionItem[] = [];
+let focusPositionDragBindings: Array<{ element: HTMLElement; handler: (event: MouseEvent) => void }> = [];
+let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
 const xGridSize: number = (window as any).xGridSize;
 const yGridSize: number = (window as any).yGridSize ?? 130;
 
@@ -84,6 +92,188 @@ function setSelectedInlayWindowId(focusTree: FocusTree, inlayWindowId: string | 
     const selectedInlayWindowIds = getSelectedInlayWindowIds();
     selectedInlayWindowIds[focusTree.id] = inlayWindowId;
     setState({ selectedInlayWindowIds });
+}
+
+function setFocusPositionEditMode(enabled: boolean) {
+    focusPositionEditMode = enabled;
+    setPreviewPanDisabled(enabled);
+    setState({ focusPositionEditMode: enabled });
+    updateFocusPositionEditUi();
+}
+
+function updateFocusPositionEditUi() {
+    const editButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
+    if (editButton) {
+        editButton.setAttribute('aria-pressed', focusPositionEditMode ? 'true' : 'false');
+        editButton.style.fontWeight = focusPositionEditMode ? '700' : '';
+    }
+
+    document.querySelectorAll<HTMLElement>('[data-focus-id]').forEach(element => {
+        const editable = element.dataset.focusEditable === 'true';
+        element.style.cursor = focusPositionEditMode && editable ? 'grab' : 'pointer';
+        element.style.boxShadow = focusPositionEditMode && editable
+            ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
+            : '';
+    });
+}
+
+function getEditableFocusElement(target: EventTarget | null): HTMLDivElement | null {
+    const focusElement = (target as HTMLElement | null)?.closest<HTMLDivElement>('[data-focus-id]');
+    if (!focusElement || focusElement.dataset.focusEditable !== 'true') {
+        return null;
+    }
+
+    return focusElement;
+}
+
+function getEditableFocusElementAtPoint(clientX: number, clientY: number): HTMLDivElement | null {
+    const dragger = document.getElementById('dragger') as HTMLDivElement | null;
+    const previousPointerEvents = dragger?.style.pointerEvents ?? '';
+    if (dragger) {
+        dragger.style.pointerEvents = 'none';
+    }
+
+    const focusElement = getEditableFocusElement(document.elementFromPoint(clientX, clientY));
+
+    if (dragger) {
+        dragger.style.pointerEvents = previousPointerEvents;
+    }
+
+    return focusElement;
+}
+
+function getEditableFocusElementFromMouseEvent(event: MouseEvent): HTMLDivElement | null {
+    return getEditableFocusElement(event.target) ?? getEditableFocusElementAtPoint(event.clientX, event.clientY);
+}
+
+function setupFocusPositionDragHandlers() {
+    document.addEventListener('click', event => {
+        if (!focusPositionEditMode) {
+            return;
+        }
+
+        const focusElement = getEditableFocusElementFromMouseEvent(event);
+        if (!focusElement) {
+            return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+
+}
+
+function clearFocusPositionDragBindings() {
+    focusPositionDragBindings.forEach(binding => {
+        binding.element.removeEventListener('mousedown', binding.handler, true);
+    });
+    focusPositionDragBindings = [];
+}
+
+function bindFocusPositionDragHandlers() {
+    clearFocusPositionDragBindings();
+
+    document.querySelectorAll<HTMLElement>('[data-focus-id][data-focus-editable="true"]').forEach(focusElement => {
+        const handler = (event: MouseEvent) => {
+            if (!focusPositionEditMode || event.button !== 0) {
+                return;
+            }
+
+            if ((event.target as HTMLElement | null)?.closest('input, select, button, textarea, option')) {
+                return;
+            }
+
+            const focusId = focusElement.dataset.focusId;
+            if (!focusId || !currentRenderedFocusTree) {
+                return;
+            }
+
+            const focus = currentRenderedFocusTree.focuses[focusId];
+            const currentPosition = currentFocusPositions[focusId];
+            if (!focus || !currentPosition) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const startingPosition = { ...currentPosition };
+            let nextAbsolutePosition = { ...startingPosition };
+            let didMove = false;
+
+            focusElement.style.cursor = 'grabbing';
+            focusElement.style.zIndex = '20';
+            focusElement.style.willChange = 'transform';
+
+            const mouseMoveHandler = (moveEvent: MouseEvent) => {
+                const scale = getState().scale || 1;
+                const deltaPageX = moveEvent.pageX - event.pageX;
+                const deltaPageY = moveEvent.pageY - event.pageY;
+                const deltaGridX = Math.round(deltaPageX / scale / xGridSize);
+                const deltaGridY = Math.round(deltaPageY / scale / yGridSize);
+                nextAbsolutePosition = {
+                    x: startingPosition.x + deltaGridX,
+                    y: startingPosition.y + deltaGridY,
+                };
+                didMove = didMove || deltaGridX !== 0 || deltaGridY !== 0;
+                focusElement.style.transform = `translate(${deltaPageX / scale}px, ${deltaPageY / scale}px)`;
+            };
+
+            const mouseUpHandler = () => {
+                document.removeEventListener('mousemove', mouseMoveHandler);
+                document.removeEventListener('mouseup', mouseUpHandler);
+                focusElement.style.transform = '';
+                focusElement.style.cursor = 'grab';
+                focusElement.style.zIndex = '';
+                focusElement.style.willChange = '';
+
+                if (!didMove || !currentRenderedFocusTree) {
+                    return;
+                }
+
+                const targetLocalPosition = getLocalPositionFromRenderedAbsolute(
+                    focus,
+                    currentRenderedFocusTree,
+                    currentRenderedExprs,
+                    nextAbsolutePosition,
+                );
+
+                vscode.postMessage({
+                    command: 'applyFocusPositionEdit',
+                    focusId,
+                    targetLocalX: targetLocalPosition.x,
+                    targetLocalY: targetLocalPosition.y,
+                    documentVersion: focusPositionDocumentVersion,
+                });
+            };
+
+            document.addEventListener('mousemove', mouseMoveHandler);
+            document.addEventListener('mouseup', mouseUpHandler);
+        };
+
+        focusElement.addEventListener('mousedown', handler, true);
+        focusPositionDragBindings.push({ element: focusElement, handler });
+    });
+}
+
+function updateFocusPositionAfterApply(focusId: string, targetLocalX: number, targetLocalY: number) {
+    if (!currentRenderedFocusTree) {
+        return;
+    }
+
+    const focus = currentRenderedFocusTree.focuses[focusId];
+    if (!focus) {
+        return;
+    }
+
+    focus.x = targetLocalX;
+    focus.y = targetLocalY;
+
+    const recalculatedPositions: Record<string, NumberPosition> = {};
+    Object.values(currentRenderedFocusTree.focuses).forEach(currentFocus => {
+        getFocusPosition(currentFocus, recalculatedPositions, currentRenderedFocusTree!, currentRenderedExprs);
+    });
+    currentFocusPositions = recalculatedPositions;
 }
 
 async function buildContent() {
@@ -117,6 +307,9 @@ async function buildContent() {
     const focusPosition: Record<string, NumberPosition> = {};
     calculateFocusAllowed(focusTree, allowBranchOptionsValue);
     const focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, allowBranchOptionsValue, focusPosition, exprs)).filter((v): v is GridBoxItem => !!v);
+    currentRenderedFocusTree = focusTree;
+    currentFocusPositions = { ...focusPosition };
+    currentRenderedExprs = exprs;
 
     const minX = minBy(Object.values(focusPosition), 'x')?.x ?? 0;
     const leftPadding = gridbox.position.x._value - Math.min(minX * xGridSize, 0);
@@ -139,8 +332,10 @@ async function buildContent() {
     const inlayWindowPlaceholder = document.getElementById('inlaywindowplaceholder') as HTMLDivElement;
     inlayWindowPlaceholder.innerHTML = renderInlayWindows(focusTree, exprs);
 
+    bindFocusPositionDragHandlers();
     subscribeNavigators();
     setupCheckedFocuses(focuses, focusTree);
+    updateFocusPositionEditUi();
 }
 
 function calculateFocusAllowed(focusTree: FocusTree, allowBranchOptionsValue: Record<string, boolean>) {
@@ -262,46 +457,6 @@ function updateSelectedFocusTree(clearCondition: boolean) {
     }
 }
 
-function getFocusPosition(
-    focus: Focus | undefined,
-    positionByFocusId: Record<string, NumberPosition>,
-    focusTree: FocusTree,
-    focusStack: Focus[] = [],
-    exprs: ConditionItem[],
-): NumberPosition {
-    if (focus === undefined) {
-        return { x: 0, y: 0 };
-    }
-
-    const cached = positionByFocusId[focus.id];
-    if (cached) {
-        return cached;
-    }
-
-    if (focusStack.includes(focus)) {
-        return { x: 0, y: 0 };
-    }
-
-    let position: NumberPosition = { x: focus.x, y: focus.y };
-    if (focus.relativePositionId !== undefined) {
-        focusStack.push(focus);
-        const relativeFocusPosition = getFocusPosition(focusTree.focuses[focus.relativePositionId], positionByFocusId, focusTree, focusStack, exprs);
-        focusStack.pop();
-        position.x += relativeFocusPosition.x;
-        position.y += relativeFocusPosition.y;
-    }
-
-    for (const offset of focus.offset) {
-        if (offset.trigger !== undefined && applyCondition(offset.trigger, exprs)) {
-            position.x += offset.x;
-            position.y += offset.y;
-        }
-    }
-
-    positionByFocusId[focus.id] = position;
-    return position;
-}
-
 function getFocusIcon(focus: Focus, exprs: ConditionItem[], styleTable: StyleTable): string {
     for (const icon of focus.icon) {
         if (applyCondition(icon.condition, exprs)) {
@@ -353,7 +508,7 @@ function focusToGridItem(
         });
     });
 
-    const position = getFocusPosition(focus, positionByFocusId, focusTree, [], exprs);
+    const position = getFocusPosition(focus, positionByFocusId, focusTree, exprs);
 
     return {
         id: focus.id,
@@ -465,6 +620,20 @@ function getInlayGfxClassName(gfxName: string | undefined, gfxFile: string | und
 let retriggerSearch: () => void = () => {};
 
 window.addEventListener('load', tryRun(async function() {
+    window.addEventListener('message', event => {
+        const message = event.data as { command?: string; documentVersion?: number; focusId?: string; targetLocalX?: number; targetLocalY?: number };
+        if (message.command !== 'focusPositionEditApplied') {
+            return;
+        }
+
+        focusPositionDocumentVersion = message.documentVersion ?? focusPositionDocumentVersion;
+        if (message.focusId !== undefined && message.targetLocalX !== undefined && message.targetLocalY !== undefined) {
+            updateFocusPositionAfterApply(message.focusId, message.targetLocalX, message.targetLocalY);
+        }
+    });
+
+    setupFocusPositionDragHandlers();
+
     const showInlayWindowsElement = document.getElementById('show-inlay-windows') as HTMLInputElement | null;
     if (showInlayWindowsElement) {
         (window as any).__showInlayWindows = !!getState().showInlayWindows;
@@ -623,6 +792,14 @@ window.addEventListener('load', tryRun(async function() {
 
     const contentElement = document.getElementById('focustreecontent') as HTMLDivElement;
     enableZoom(contentElement, 0, 40);
+    setPreviewPanDisabled(focusPositionEditMode);
+
+    const focusPositionEditButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
+    focusPositionEditButton?.addEventListener('click', async () => {
+        setFocusPositionEditMode(!focusPositionEditMode);
+        await buildContent();
+        retriggerSearch();
+    });
 
     const showWarnings = document.getElementById('show-warnings') as HTMLButtonElement;
     if (showWarnings) {

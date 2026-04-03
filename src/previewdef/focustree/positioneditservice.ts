@@ -1,0 +1,325 @@
+import * as vscode from 'vscode';
+import { Node, parseHoi4File } from "../../hoiformat/hoiparser";
+import { TextRange } from "./positioneditcommon";
+
+interface ScalarFieldMeta {
+    nodeRange: TextRange;
+    valueRange: TextRange;
+}
+
+interface FocusNodeMeta {
+    focusId: string;
+    sourceRange: TextRange;
+    x?: ScalarFieldMeta;
+    y?: ScalarFieldMeta;
+    firstOffsetStart?: number;
+}
+
+export interface FocusPositionTextChange {
+    range: TextRange;
+    text: string;
+}
+
+export interface FocusPositionTextChangeResult {
+    changes?: FocusPositionTextChange[];
+    error?: string;
+}
+
+export function buildFocusPositionTextChanges(
+    content: string,
+    focusId: string,
+    targetLocalX: number,
+    targetLocalY: number,
+): FocusPositionTextChangeResult {
+    const bomOffset = content.startsWith('\uFEFF') ? 1 : 0;
+    const parseContent = bomOffset > 0 ? content.slice(bomOffset) : content;
+    const root = parseHoi4File(parseContent);
+    const matches = collectEditableFocuses(root)
+        .map(meta => shiftFocusMeta(meta, bomOffset))
+        .filter(meta => meta.focusId === focusId);
+    if (matches.length === 0) {
+        return { error: `Focus ${focusId} is not editable in the current file.` };
+    }
+
+    if (matches.length > 1) {
+        return { error: `Focus ${focusId} is ambiguous in the current file.` };
+    }
+
+    const focus = matches[0];
+    const lineEnding = detectLineEnding(content);
+    const changes: FocusPositionTextChange[] = [];
+
+    ensureScalarField(changes, content, focus.sourceRange, focus.x, 'x', `${Math.round(targetLocalX)}`, lineEnding, focus.firstOffsetStart);
+    ensureScalarField(changes, content, focus.sourceRange, focus.y, 'y', `${Math.round(targetLocalY)}`, lineEnding, focus.firstOffsetStart);
+
+    return {
+        changes: dedupeChanges(changes),
+    };
+}
+
+export function applyTextChanges(content: string, changes: FocusPositionTextChange[]): string {
+    let result = content;
+    const ordered = [...changes].sort((a, b) => b.range.start - a.range.start || b.range.end - a.range.end);
+    for (const change of ordered) {
+        result = result.slice(0, change.range.start) + change.text + result.slice(change.range.end);
+    }
+    return result;
+}
+
+export function buildFocusPositionWorkspaceEdit(
+    document: vscode.TextDocument,
+    focusId: string,
+    targetLocalX: number,
+    targetLocalY: number,
+): { edit?: vscode.WorkspaceEdit; error?: string } {
+    const result = buildFocusPositionTextChanges(document.getText(), focusId, targetLocalX, targetLocalY);
+    if (result.error) {
+        return { error: result.error };
+    }
+
+    const changes = result.changes ?? [];
+    if (changes.length === 0) {
+        return {};
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    for (const change of changes) {
+        edit.replace(
+            document.uri,
+            new vscode.Range(document.positionAt(change.range.start), document.positionAt(change.range.end)),
+            change.text,
+        );
+    }
+
+    return { edit };
+}
+
+function collectEditableFocuses(root: Node): FocusNodeMeta[] {
+    if (!Array.isArray(root.value)) {
+        return [];
+    }
+
+    const result: FocusNodeMeta[] = [];
+    for (const child of root.value) {
+        const childName = child.name?.toLowerCase();
+        if (!childName || !Array.isArray(child.value)) {
+            continue;
+        }
+
+        if (childName === 'focus_tree') {
+            for (const focusNode of child.value.filter(isNamedBlock('focus'))) {
+                const meta = collectFocusMeta(focusNode);
+                if (meta) {
+                    result.push(meta);
+                }
+            }
+            continue;
+        }
+
+        if (childName === 'shared_focus' || childName === 'joint_focus') {
+            const meta = collectFocusMeta(child);
+            if (meta) {
+                result.push(meta);
+            }
+        }
+    }
+
+    return result;
+}
+
+function collectFocusMeta(node: Node): FocusNodeMeta | undefined {
+    const focusId = readStringChildValue(node, 'id');
+    if (!focusId) {
+        return undefined;
+    }
+
+    return {
+        focusId,
+        sourceRange: createNodeRange(node),
+        x: collectScalarField(node, 'x'),
+        y: collectScalarField(node, 'y'),
+        firstOffsetStart: findFirstOffsetStart(node),
+    };
+}
+
+function shiftFocusMeta(meta: FocusNodeMeta, offset: number): FocusNodeMeta {
+    if (offset === 0) {
+        return meta;
+    }
+
+    return {
+        ...meta,
+        sourceRange: shiftRange(meta.sourceRange, offset),
+        x: meta.x ? shiftScalarField(meta.x, offset) : undefined,
+        y: meta.y ? shiftScalarField(meta.y, offset) : undefined,
+        firstOffsetStart: meta.firstOffsetStart !== undefined ? meta.firstOffsetStart + offset : undefined,
+    };
+}
+
+function shiftScalarField(meta: ScalarFieldMeta, offset: number): ScalarFieldMeta {
+    return {
+        nodeRange: shiftRange(meta.nodeRange, offset),
+        valueRange: shiftRange(meta.valueRange, offset),
+    };
+}
+
+function shiftRange(range: TextRange, offset: number): TextRange {
+    return {
+        start: range.start + offset,
+        end: range.end + offset,
+    };
+}
+
+function collectScalarField(node: Node, fieldName: string): ScalarFieldMeta | undefined {
+    const child = findNamedChild(node, fieldName);
+    if (!child || !child.nameToken || !child.valueStartToken || !child.valueEndToken) {
+        return undefined;
+    }
+
+    return {
+        nodeRange: createNodeRange(child),
+        valueRange: {
+            start: child.valueStartToken.start,
+            end: child.valueEndToken.end,
+        },
+    };
+}
+
+function ensureScalarField(
+    changes: FocusPositionTextChange[],
+    content: string,
+    blockRange: TextRange,
+    fieldMeta: ScalarFieldMeta | undefined,
+    fieldName: string,
+    valueText: string,
+    lineEnding: string,
+    firstOffsetStart?: number,
+): void {
+    if (fieldMeta) {
+        changes.push({
+            range: fieldMeta.valueRange,
+            text: valueText,
+        });
+        return;
+    }
+
+    const insertPosition = firstOffsetStart !== undefined
+        ? getLineStart(content, firstOffsetStart)
+        : getBlockClosingLineStart(content, blockRange);
+    const { childIndent } = getBlockIndentation(content, blockRange);
+    changes.push({
+        range: { start: insertPosition, end: insertPosition },
+        text: `${childIndent}${fieldName} = ${valueText}${lineEnding}`,
+    });
+}
+
+function dedupeChanges(changes: FocusPositionTextChange[]): FocusPositionTextChange[] {
+    const seen = new Map<string, FocusPositionTextChange>();
+    for (const change of changes) {
+        const key = `${change.range.start}:${change.range.end}`;
+        const existing = seen.get(key);
+        if (!existing) {
+            seen.set(key, { ...change });
+            continue;
+        }
+
+        if (change.range.start === change.range.end) {
+            existing.text += change.text;
+        } else {
+            seen.set(key, { ...change });
+        }
+    }
+
+    return Array.from(seen.values()).sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
+}
+
+function isNamedBlock(expectedName: string) {
+    return (node: Node): boolean => node.name?.toLowerCase() === expectedName && Array.isArray(node.value);
+}
+
+function findNamedChild(node: Node, expectedName: string): Node | undefined {
+    if (!Array.isArray(node.value)) {
+        return undefined;
+    }
+
+    return node.value.find(child => child.name?.toLowerCase() === expectedName);
+}
+
+function findFirstOffsetStart(node: Node): number | undefined {
+    if (!Array.isArray(node.value)) {
+        return undefined;
+    }
+
+    const offsetNode = node.value.find(child => child.name?.toLowerCase() === 'offset');
+    return offsetNode?.nameToken?.start ?? offsetNode?.valueStartToken?.start ?? undefined;
+}
+
+function readStringChildValue(node: Node, fieldName: string): string | undefined {
+    const child = findNamedChild(node, fieldName);
+    if (!child) {
+        return undefined;
+    }
+
+    if (typeof child.value === 'string') {
+        return child.value;
+    }
+
+    if (typeof child.value === 'object' && child.value !== null && 'name' in child.value) {
+        return child.value.name;
+    }
+
+    return undefined;
+}
+
+function createNodeRange(node: Node): TextRange {
+    return {
+        start: node.nameToken?.start ?? node.valueStartToken?.start ?? 0,
+        end: node.valueEndToken?.end ?? node.valueStartToken?.end ?? node.nameToken?.end ?? 0,
+    };
+}
+
+function getLineStart(content: string, index: number): number {
+    const lineBreak = content.lastIndexOf('\n', Math.max(0, index - 1));
+    return lineBreak === -1 ? 0 : lineBreak + 1;
+}
+
+function getBlockClosingLineStart(content: string, blockRange: TextRange): number {
+    const closingBraceIndex = Math.max(blockRange.start, blockRange.end - 1);
+    return getLineStart(content, closingBraceIndex);
+}
+
+function getLineIndent(content: string, index: number): string {
+    const lineStart = getLineStart(content, index);
+    const nextLineBreak = content.indexOf('\n', lineStart);
+    const line = content.slice(lineStart, nextLineBreak === -1 ? content.length : nextLineBreak);
+    const match = /^[\t ]*/.exec(line);
+    return match?.[0] ?? '';
+}
+
+function inferIndentUnit(content: string, blockIndent: string, blockRange: TextRange): string {
+    const nextLineStart = content.indexOf('\n', blockRange.start);
+    if (nextLineStart !== -1 && nextLineStart + 1 < blockRange.end) {
+        const nextIndent = getLineIndent(content, nextLineStart + 1);
+        if (nextIndent.startsWith(blockIndent) && nextIndent.length > blockIndent.length) {
+            return nextIndent.slice(blockIndent.length);
+        }
+    }
+
+    return blockIndent.includes('\t') ? '\t' : '    ';
+}
+
+function getBlockIndentation(content: string, blockRange: TextRange): { childIndent: string } {
+    const blockIndent = getLineIndent(content, blockRange.start);
+    const closeLineStart = getBlockClosingLineStart(content, blockRange);
+    const closingIndentEnd = content.indexOf('}', closeLineStart);
+    const closingIndent = content.slice(closeLineStart, closingIndentEnd === -1 ? closeLineStart : closingIndentEnd);
+    const indentUnit = inferIndentUnit(content, blockIndent, blockRange);
+
+    return {
+        childIndent: (closingIndent || blockIndent) + indentUnit,
+    };
+}
+
+function detectLineEnding(content: string): string {
+    return content.includes('\r\n') ? '\r\n' : '\n';
+}

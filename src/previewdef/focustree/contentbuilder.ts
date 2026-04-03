@@ -3,7 +3,7 @@ import { flatMap } from 'lodash';
 import { FocusTree, Focus } from './schema';
 import { getSpriteByGfxName, Image, getImageByPath } from '../../util/image/imagecache';
 import { localize, i18nTableAsScript } from '../../util/i18n';
-import { forceError } from '../../util/common';
+import { forceError, NumberPosition } from '../../util/common';
 import { GridBoxType, ButtonType, IconType } from '../../hoiformat/gui';
 import { HOIPartial, toNumberLike, toStringAsSymbolIgnoreCase } from '../../hoiformat/schema';
 import { html, htmlEscape } from '../../util/html';
@@ -40,7 +40,16 @@ export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.U
         const styleTable = new StyleTable();
         const jsCodes: string[] = [];
         const styleNonce = Math.random().toString(36).slice(2);
-        const baseContent = await renderFocusTrees(focustrees, styleTable, loadResult.result.gfxFiles, jsCodes, styleNonce, loader.file);
+        const baseContent = await renderFocusTrees(
+            focustrees,
+            styleTable,
+            loadResult.result.gfxFiles,
+            loadResult.result.focusSpacing,
+            jsCodes,
+            styleNonce,
+            loader.file,
+            documentVersion,
+        );
         jsCodes.push(i18nTableAsScript());
 
         return html(
@@ -68,8 +77,8 @@ export async function renderFocusTreeFile(loader: FocusTreeLoader, uri: vscode.U
 
 const leftPaddingBase = 50;
 const topPaddingBase = 50;
-const xGridSize = 96;
-const yGridSize = 130;
+const defaultXGridSize = 96;
+const defaultYGridSize = 130;
 
 function attributeEscape(value: string): string {
     return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
@@ -79,10 +88,14 @@ async function renderFocusTrees(
     focusTrees: FocusTree[],
     styleTable: StyleTable,
     gfxFiles: string[],
+    focusSpacing: NumberPosition | undefined,
     jsCodes: string[],
     styleNonce: string,
     file: string,
+    documentVersion: number,
 ): Promise<string> {
+    const xGridSize = normalizeFocusSpacingValue(focusSpacing?.x, defaultXGridSize);
+    const yGridSize = normalizeFocusSpacingValue(focusSpacing?.y, defaultYGridSize);
     const gridBox: HOIPartial<GridBoxType> = {
         position: { x: toNumberLike(leftPaddingBase), y: toNumberLike(topPaddingBase) },
         format: toStringAsSymbolIgnoreCase('up'),
@@ -109,6 +122,8 @@ async function renderFocusTrees(
     jsCodes.push('window.useConditionInFocus = ' + useConditionInFocus);
     jsCodes.push('window.xGridSize = ' + xGridSize);
     jsCodes.push('window.yGridSize = ' + yGridSize);
+    jsCodes.push('window.focusPositionDocumentVersion = ' + JSON.stringify(documentVersion));
+    jsCodes.push('window.focusPositionActiveFile = ' + JSON.stringify(file));
 
     const continuousFocusContent =
         `<div id="continuousFocuses" class="${styleTable.oneTimeStyle('continuousFocuses', () => `
@@ -137,6 +152,10 @@ async function renderFocusTrees(
         renderWarningContainer(styleTable) +
         renderToolBar(focusTrees, styleTable)
     );
+}
+
+function normalizeFocusSpacingValue(value: number | undefined, fallback: number): number {
+    return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
 function renderWarningContainer(styleTable: StyleTable) {
@@ -184,6 +203,13 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
             id="searchbox"
             type="text"
         />`;
+
+    const editToggle = `
+        <button
+            id="focus-position-edit"
+            title="${localize('TODO', 'Toggle focus position editing')}"
+            class="${styleTable.style('focusPositionEditButton', () => `margin-right:10px`)}"
+        >${localize('TODO', 'Edit')}</button>`;
 
     const inlayWindowsToggle = `
         <div id="show-inlay-windows-container" class="${styleTable.style('inlayWindowsContainer', () => `margin-right:10px; display:flex; align-items:center;`)}">
@@ -240,6 +266,7 @@ function renderToolBar(focusTrees: FocusTree[], styleTable: StyleTable): string 
     return `<div class="toolbar-outer ${styleTable.style('toolbar-height', () => `box-sizing: border-box; height: 40px;`)}">
         <div class="toolbar">
             ${focuses}
+            ${editToggle}
             ${searchbox}
             ${inlayWindowsToggle}
             ${inlayWindows}
@@ -447,6 +474,9 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     start="${focus.token?.start}"
     end="${focus.token?.end}"
     ${file === focus.file ? '' : `file="${focus.file}"`}
+    data-focus-id="${attributeEscape(focus.id)}"
+    data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
+    data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}"
     title="${focus.id}\n({{position}})">
         <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>

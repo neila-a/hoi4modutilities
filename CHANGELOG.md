@@ -4,7 +4,16 @@ All notable changes to the "hoi4modutilities" extension will be documented in th
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
-## [0.13.10] - 2026/04/03 - Latest
+## [0.13.11] - 2026/04/03 - Latest
+
+### Added
+* Reintroduce a minimal Focus Preview `Edit` toggle that lets you drag focuses defined in the current file and saves their `x`/`y` positions on mouseup.
+
+### Changed
+* Keep drag editing local to current-file `focus`, `shared_focus`, and `joint_focus` entries while leaving imported dependency focuses read-only in the preview.
+* Derive saved local `x`/`y` values from the rendered drop position so `relative_position_id` and active focus `offset` rules stay intact.
+
+## [0.13.10] - 2026/04/03
 
 ### Removed
 * Remove the Focus Preview `Edit` feature surface, including its settings, migrations, drag handlers, and layout-edit plumbing, while keeping the rest of the focus preview behavior unchanged.

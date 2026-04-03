@@ -4,7 +4,10 @@ import { matchPathEnd } from '../../util/nodecommon';
 import { PreviewBase } from '../previewbase';
 import { PreviewProviderDef } from '../previewmanager';
 import { FocusTreeLoader } from './loader';
-import { getRelativePathInWorkspace } from '../../util/vsccommon';
+import { getDocumentByUri, getRelativePathInWorkspace } from '../../util/vsccommon';
+import { FocusPositionEditMessage } from './positioneditcommon';
+import { buildFocusPositionWorkspaceEdit } from './positioneditservice';
+import { localize } from '../../util/i18n';
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
     const uri = document.uri;
@@ -31,6 +34,45 @@ class FocusTreePreview extends PreviewBase {
         const result = await renderFocusTreeFile(this.focusTreeLoader, document.uri, this.panel.webview, document.version);
         this.content = undefined;
         return result;
+    }
+
+    protected async onDidReceiveMessage(msg: FocusPositionEditMessage): Promise<boolean> {
+        if (msg.command !== 'applyFocusPositionEdit') {
+            return false;
+        }
+
+        const document = getDocumentByUri(this.uri);
+        if (!document) {
+            await vscode.window.showErrorMessage(localize('TODO', 'The source document is no longer open.'));
+            return true;
+        }
+
+        const { edit, error } = buildFocusPositionWorkspaceEdit(document, msg.focusId, msg.targetLocalX, msg.targetLocalY);
+        if (error) {
+            await vscode.window.showErrorMessage(error);
+            return true;
+        }
+
+        if (!edit) {
+            return true;
+        }
+
+        const applied = await vscode.workspace.applyEdit(edit);
+        if (!applied) {
+            await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the focus position edit.'));
+            return true;
+        }
+
+        const updatedDocument = getDocumentByUri(this.uri);
+        await this.panel.webview.postMessage({
+            command: 'focusPositionEditApplied',
+            focusId: msg.focusId,
+            targetLocalX: msg.targetLocalX,
+            targetLocalY: msg.targetLocalY,
+            documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
+        });
+
+        return true;
     }
 }
 
