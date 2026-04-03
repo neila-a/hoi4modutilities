@@ -20,7 +20,7 @@ nodeModule._load = function(request: string, parent: NodeModule | undefined, isM
 };
 
 const { getFocusTree } = require('../../src/previewdef/focustree/schema') as typeof import('../../src/previewdef/focustree/schema');
-const { buildFocusPositionTextChanges, buildFocusLinkTextChanges, buildCreateFocusTemplateTextChanges, buildDeleteFocusTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
+const { buildFocusPositionTextChanges, buildFocusLinkTextChanges, buildFocusExclusiveLinkTextChanges, buildCreateFocusTemplateTextChanges, buildDeleteFocusTextChanges, applyTextChanges } = require('../../src/previewdef/focustree/positioneditservice') as typeof import('../../src/previewdef/focustree/positioneditservice');
 const { getFocusPosition, getLocalPositionFromRenderedAbsolute } = require('../../src/previewdef/focustree/positioning') as typeof import('../../src/previewdef/focustree/positioning');
 
 describe('focus tree position edit helpers', () => {
@@ -162,7 +162,7 @@ describe('focus tree position edit helpers', () => {
         assert.match(updated, /id = CHILD[\s\S]*?prerequisite = \{ focus = OLD_PARENT \}[\s\S]*?prerequisite = \{ focus = ROOT \}[\s\S]*?relative_position_id = ROOT[\s\S]*?x = 7[\s\S]*?y = 8/);
     });
 
-    it('does not duplicate an existing parent link when the child is already linked', () => {
+    it('toggles an existing parent link off while updating local coordinates for the unlinked child', () => {
         const content = `focus_tree = {
     focus = {
         id = ROOT
@@ -177,10 +177,14 @@ describe('focus tree position edit helpers', () => {
         y = 5
     }
 }`;
-        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD');
+        const result = buildFocusLinkTextChanges(content, 'ROOT', 'CHILD', 11, 13);
 
         assert.ifError(result.error);
-        assert.strictEqual(result.changes?.length ?? 0, 0);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.doesNotMatch(updated, /prerequisite = \{ focus = ROOT \}/);
+        assert.doesNotMatch(updated, /relative_position_id = ROOT/);
+        assert.match(updated, /id = CHILD[\s\S]*?x = 11[\s\S]*?y = 13/);
     });
 
     it('rejects invalid link requests such as self-links or non-local child focuses', () => {
@@ -196,6 +200,69 @@ describe('focus tree position edit helpers', () => {
 
         assert.match(selfLink.error ?? '', /cannot be linked to itself/i);
         assert.match(importedChild.error ?? '', /not editable/);
+    });
+
+    it('adds a mutually exclusive link to both editable focuses', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = OTHER
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusExclusiveLinkTextChanges(content, 'ROOT', 'OTHER');
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.match(updated, /id = ROOT[\s\S]*?mutually_exclusive = \{ focus = OTHER \}[\s\S]*?x = 0[\s\S]*?y = 0/);
+        assert.match(updated, /id = OTHER[\s\S]*?mutually_exclusive = \{ focus = ROOT \}[\s\S]*?x = 4[\s\S]*?y = 5/);
+    });
+
+    it('toggles an existing mutually exclusive link off on both focuses when reapplied', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        mutually_exclusive = { focus = OTHER }
+        x = 0
+        y = 0
+    }
+    focus = {
+        id = OTHER
+        mutually_exclusive = { focus = ROOT }
+        x = 4
+        y = 5
+    }
+}`;
+        const result = buildFocusExclusiveLinkTextChanges(content, 'ROOT', 'OTHER');
+
+        assert.ifError(result.error);
+        const updated = applyTextChanges(content, result.changes ?? []);
+
+        assert.doesNotMatch(updated, /mutually_exclusive = \{ focus = OTHER \}/);
+        assert.doesNotMatch(updated, /mutually_exclusive = \{ focus = ROOT \}/);
+        assert.match(updated, /id = ROOT[\s\S]*?x = 0[\s\S]*?y = 0/);
+        assert.match(updated, /id = OTHER[\s\S]*?x = 4[\s\S]*?y = 5/);
+    });
+
+    it('rejects invalid mutually exclusive link requests such as self-links or non-local sources', () => {
+        const content = `focus_tree = {
+    focus = {
+        id = ROOT
+        x = 0
+        y = 0
+    }
+}`;
+        const selfLink = buildFocusExclusiveLinkTextChanges(content, 'ROOT', 'ROOT');
+        const importedSource = buildFocusExclusiveLinkTextChanges(content, 'IMPORTED_CHILD', 'ROOT');
+
+        assert.match(selfLink.error ?? '', /cannot be linked to itself/i);
+        assert.match(importedSource.error ?? '', /not editable/);
     });
 
     it('creates the requested full focus template inside the selected local focus tree with a blank line separator and tag-derived prefix', () => {
@@ -320,7 +387,7 @@ describe('focus tree position edit helpers', () => {
         assert.match(result.error ?? '', /not editable/);
     });
 
-    it('deletes a focus block and removes dependent prerequisite and relative_position_id references from local children', () => {
+    it('deletes a focus block and removes dependent prerequisite, mutually exclusive, and relative_position_id references from local children', () => {
         const content = `focus_tree = {
     focus = {
         id = ROOT
@@ -331,6 +398,7 @@ describe('focus tree position edit helpers', () => {
     focus = {
         id = CHILD
         prerequisite = { focus = ROOT }
+        mutually_exclusive = { focus = ROOT }
         relative_position_id = ROOT
         x = 2
         y = 3

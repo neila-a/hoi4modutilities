@@ -6,7 +6,7 @@ import { PreviewProviderDef } from '../previewmanager';
 import { FocusTreeLoader } from './loader';
 import { getDocumentByUri, getRelativePathInWorkspace } from '../../util/vsccommon';
 import { FocusPositionEditMessage } from './positioneditcommon';
-import { buildCreateFocusTemplateWorkspaceEdit, buildDeleteFocusWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
+import { buildCreateFocusTemplateWorkspaceEdit, buildDeleteFocusWorkspaceEdit, buildFocusExclusiveLinkWorkspaceEdit, buildFocusLinkWorkspaceEdit, buildFocusPositionWorkspaceEdit } from './positioneditservice';
 import { localize } from '../../util/i18n';
 
 function canPreviewFocusTree(document: vscode.TextDocument) {
@@ -127,6 +127,7 @@ class FocusTreePreview extends PreviewBase {
         if (msg.command !== 'applyFocusPositionEdit'
             && msg.command !== 'createFocusTemplateAtPosition'
             && msg.command !== 'applyFocusLinkEdit'
+            && msg.command !== 'applyFocusExclusiveLinkEdit'
             && msg.command !== 'deleteFocus') {
             return false;
         }
@@ -210,6 +211,47 @@ class FocusTreePreview extends PreviewBase {
                 childFocusId: msg.childFocusId,
                 targetLocalX: msg.targetLocalX,
                 targetLocalY: msg.targetLocalY,
+                documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
+            });
+
+            return true;
+        }
+
+        if (msg.command === 'applyFocusExclusiveLinkEdit') {
+            const { edit, error } = buildFocusExclusiveLinkWorkspaceEdit(
+                document,
+                msg.sourceFocusId,
+                msg.targetFocusId,
+            );
+            if (error) {
+                await vscode.window.showErrorMessage(error);
+                return true;
+            }
+
+            if (!edit) {
+                await this.panel.webview.postMessage({
+                    command: 'focusExclusiveLinkEditApplied',
+                    sourceFocusId: msg.sourceFocusId,
+                    targetFocusId: msg.targetFocusId,
+                    documentVersion: document.version,
+                });
+                return true;
+            }
+
+            const applied = await vscode.workspace.applyEdit(edit);
+            if (!applied) {
+                await vscode.window.showErrorMessage(localize('TODO', 'VS Code refused the mutually exclusive focus link edit.'));
+                return true;
+            }
+
+            const updatedDocument = getDocumentByUri(this.uri);
+            if (updatedDocument) {
+                this.pendingLocalEditDocumentVersions.add(updatedDocument.version);
+            }
+            await this.panel.webview.postMessage({
+                command: 'focusExclusiveLinkEditApplied',
+                sourceFocusId: msg.sourceFocusId,
+                targetFocusId: msg.targetFocusId,
                 documentVersion: updatedDocument?.version ?? Math.max(document.version, msg.documentVersion) + 1,
             });
 

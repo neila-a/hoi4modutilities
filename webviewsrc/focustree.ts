@@ -54,6 +54,7 @@ function search(searchContent: string, navigate: boolean = true) {
 
 const useConditionInFocus: boolean = (window as any).useConditionInFocus;
 let focusTrees: FocusTree[] = (window as any).focusTrees;
+type PendingFocusLinkType = 'prerequisite' | 'exclusive';
 
 let selectedExprs: ConditionItem[] = getState().selectedExprs ?? [];
 let selectedFocusTreeIndex: number = Math.min(focusTrees.length - 1, getState().selectedFocusTreeIndex ?? 0);
@@ -72,6 +73,7 @@ let focusPositionDragBindings: Array<{ element: HTMLElement; handler: (event: Mo
 let focusPositionDocumentVersion: number = (window as any).focusPositionDocumentVersion ?? 0;
 let suppressEditableFocusClickUntil = 0;
 let pendingFocusLinkParentId: string | undefined = undefined;
+let pendingFocusLinkType: PendingFocusLinkType | undefined = undefined;
 let focusNavigateTimer: number | undefined = undefined;
 let focusContextMenuTargetId: string | undefined = undefined;
 let xGridSize: number = (window as any).xGridSize;
@@ -139,6 +141,10 @@ function setFocusPositionEditMode(enabled: boolean) {
     updateFocusPositionEditUi();
 }
 
+function hasPendingFocusLink(): boolean {
+    return pendingFocusLinkParentId !== undefined && pendingFocusLinkType !== undefined;
+}
+
 function updateFocusPositionEditUi() {
     const editButton = document.getElementById('focus-position-edit') as HTMLButtonElement | null;
     if (editButton) {
@@ -150,10 +156,12 @@ function updateFocusPositionEditUi() {
 
     currentRenderedFocusElementsList.forEach(element => {
         const editable = element.dataset.focusEditable === 'true';
-        const isPendingParent = pendingFocusLinkParentId !== undefined && element.dataset.focusId === pendingFocusLinkParentId;
+        const isPendingParent = hasPendingFocusLink() && element.dataset.focusId === pendingFocusLinkParentId;
         element.style.cursor = focusPositionEditMode && editable ? 'grab' : 'pointer';
         element.style.boxShadow = isPendingParent
-            ? '0 0 0 2px rgba(255, 196, 64, 0.95) inset'
+            ? pendingFocusLinkType === 'exclusive'
+                ? '0 0 0 2px rgba(255, 96, 96, 0.95) inset'
+                : '0 0 0 2px rgba(255, 196, 64, 0.95) inset'
             : focusPositionEditMode && editable
                 ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
                 : '';
@@ -239,33 +247,46 @@ function ensureFocusContextMenu(): HTMLDivElement {
         event.stopPropagation();
     });
 
-    const deleteItem = document.createElement('button');
-    deleteItem.type = 'button';
-    deleteItem.textContent = 'Delete focus';
-    deleteItem.style.display = 'block';
-    deleteItem.style.width = '100%';
-    deleteItem.style.height = '28px';
-    deleteItem.style.padding = '0 12px';
-    deleteItem.style.textAlign = 'left';
-    deleteItem.style.background = 'transparent';
-    deleteItem.style.color = 'inherit';
-    deleteItem.style.border = 'none';
-    deleteItem.style.cursor = 'pointer';
-    deleteItem.addEventListener('mouseenter', () => {
-        deleteItem.style.background = 'var(--vscode-list-hoverBackground)';
-    });
-    deleteItem.addEventListener('mouseleave', () => {
-        deleteItem.style.background = 'transparent';
-    });
-    deleteItem.addEventListener('mousedown', event => {
-        event.preventDefault();
-        event.stopPropagation();
-        const focusId = deleteItem.dataset.focusId ?? focusContextMenuTargetId;
-        hideFocusContextMenu();
-        if (!focusId) {
-            return;
-        }
+    const createMenuButton = (label: string, mouseDownHandler: (focusId: string) => void) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = label;
+        button.style.display = 'block';
+        button.style.width = '100%';
+        button.style.height = '28px';
+        button.style.padding = '0 12px';
+        button.style.textAlign = 'left';
+        button.style.background = 'transparent';
+        button.style.color = 'inherit';
+        button.style.border = 'none';
+        button.style.cursor = 'pointer';
+        button.addEventListener('mouseenter', () => {
+            button.style.background = 'var(--vscode-list-hoverBackground)';
+        });
+        button.addEventListener('mouseleave', () => {
+            button.style.background = 'transparent';
+        });
+        button.addEventListener('mousedown', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const focusId = button.dataset.focusId ?? focusContextMenuTargetId;
+            hideFocusContextMenu();
+            if (!focusId) {
+                return;
+            }
 
+            mouseDownHandler(focusId);
+        });
+        return button;
+    };
+
+    const linkItem = createMenuButton('Link focus', focusId => {
+        startPendingFocusLink(focusId, undefined, undefined, 'prerequisite');
+    });
+    const exclusiveItem = createMenuButton('Link mutually exclusive', focusId => {
+        startPendingFocusLink(focusId, undefined, undefined, 'exclusive');
+    });
+    const deleteItem = createMenuButton('Delete focus', focusId => {
         vscode.postMessage({
             command: 'deleteFocus',
             focusId,
@@ -273,6 +294,8 @@ function ensureFocusContextMenu(): HTMLDivElement {
         });
     });
 
+    menu.appendChild(linkItem);
+    menu.appendChild(exclusiveItem);
     menu.appendChild(deleteItem);
     document.body.appendChild(menu);
     return menu;
@@ -283,10 +306,9 @@ function hideFocusContextMenu() {
     const menu = document.getElementById('focus-context-menu') as HTMLDivElement | null;
     if (menu) {
         delete menu.dataset.focusId;
-        const deleteButton = menu.querySelector('button') as HTMLButtonElement | null;
-        if (deleteButton) {
-            delete deleteButton.dataset.focusId;
-        }
+        menu.querySelectorAll('button').forEach(button => {
+            delete (button as HTMLButtonElement).dataset.focusId;
+        });
         menu.style.display = 'none';
     }
 }
@@ -295,10 +317,9 @@ function showFocusContextMenu(focusId: string, clientX: number, clientY: number)
     const menu = ensureFocusContextMenu();
     focusContextMenuTargetId = focusId;
     menu.dataset.focusId = focusId;
-    const deleteButton = menu.querySelector('button') as HTMLButtonElement | null;
-    if (deleteButton) {
-        deleteButton.dataset.focusId = focusId;
-    }
+    menu.querySelectorAll('button').forEach(button => {
+        (button as HTMLButtonElement).dataset.focusId = focusId;
+    });
     menu.style.left = '0';
     menu.style.top = '0';
     menu.style.display = 'block';
@@ -328,7 +349,7 @@ function scheduleFocusNavigate(focusElement: HTMLElement) {
     clearPendingFocusNavigate();
     focusNavigateTimer = window.setTimeout(() => {
         focusNavigateTimer = undefined;
-        if (!focusPositionEditMode || pendingFocusLinkParentId !== undefined) {
+        if (!focusPositionEditMode || hasPendingFocusLink()) {
             return;
         }
 
@@ -381,7 +402,7 @@ function setupFocusPositionDragHandlers() {
         }
 
         const focusElement = getFocusElementFromMouseEvent(event);
-        if (pendingFocusLinkParentId !== undefined) {
+        if (hasPendingFocusLink()) {
             clearPendingFocusNavigate();
             event.preventDefault();
             event.stopPropagation();
@@ -392,13 +413,24 @@ function setupFocusPositionDragHandlers() {
             }
 
             const parentFocusId = pendingFocusLinkParentId;
+            const linkType = pendingFocusLinkType;
             const childFocusId = focusElement.dataset.focusId;
             clearPendingFocusLink();
-            if (!parentFocusId || !childFocusId || parentFocusId === childFocusId) {
+            if (!parentFocusId || !childFocusId || !linkType || parentFocusId === childFocusId) {
                 return;
             }
 
             if (!currentRenderedFocusTree) {
+                return;
+            }
+
+            if (linkType === 'exclusive') {
+                vscode.postMessage({
+                    command: 'applyFocusExclusiveLinkEdit',
+                    sourceFocusId: parentFocusId,
+                    targetFocusId: childFocusId,
+                    documentVersion: focusPositionDocumentVersion,
+                });
                 return;
             }
 
@@ -408,9 +440,11 @@ function setupFocusPositionDragHandlers() {
                 return;
             }
 
+            const isExistingLink = childFocus.prerequisite.some(group => group.includes(parentFocusId))
+                || childFocus.relativePositionId === parentFocusId;
             const linkedChildFocus: Focus = {
                 ...childFocus,
-                relativePositionId: parentFocusId,
+                relativePositionId: isExistingLink ? undefined : parentFocusId,
                 prerequisite: childFocus.prerequisite,
                 exclusive: childFocus.exclusive,
                 icon: childFocus.icon,
@@ -465,11 +499,11 @@ function setupFocusPositionDragHandlers() {
         clearPendingFocusNavigate();
         event.preventDefault();
         event.stopPropagation();
-        startPendingFocusLink(parentFocusId, event.clientX, event.clientY);
+        startPendingFocusLink(parentFocusId, event.clientX, event.clientY, 'prerequisite');
     }, true);
 
     document.addEventListener('mousemove', event => {
-        if (pendingFocusLinkParentId === undefined) {
+        if (!hasPendingFocusLink()) {
             return;
         }
 
@@ -479,7 +513,7 @@ function setupFocusPositionDragHandlers() {
     document.addEventListener('keydown', event => {
         if (event.key === 'Escape') {
             hideFocusContextMenu();
-            if (pendingFocusLinkParentId !== undefined) {
+            if (hasPendingFocusLink()) {
                 clearPendingFocusLink();
             }
         }
@@ -534,11 +568,16 @@ function getElementViewportCenter(element: HTMLElement): NumberPosition {
 }
 
 function refreshPendingFocusLinkOverlay(targetClientX?: number, targetClientY?: number) {
-    if (pendingFocusLinkParentId === undefined) {
+    if (!hasPendingFocusLink()) {
         return;
     }
 
-    const parentElement = getFocusElementById(pendingFocusLinkParentId);
+    const parentFocusId = pendingFocusLinkParentId;
+    if (!parentFocusId) {
+        return;
+    }
+
+    const parentElement = getFocusElementById(parentFocusId);
     if (!parentElement) {
         clearPendingFocusLink();
         return;
@@ -557,12 +596,22 @@ function refreshPendingFocusLinkOverlay(targetClientX?: number, targetClientY?: 
     line.setAttribute('y1', `${parentCenter.y}`);
     line.setAttribute('x2', `${x2}`);
     line.setAttribute('y2', `${y2}`);
+    line.setAttribute('stroke', pendingFocusLinkType === 'exclusive' ? '#ff6666' : '#ffc440');
+    line.setAttribute('stroke-dasharray', pendingFocusLinkType === 'exclusive' ? '0' : '8 5');
     overlay.style.display = 'block';
 }
 
-function startPendingFocusLink(parentFocusId: string, clientX: number, clientY: number) {
+function startPendingFocusLink(
+    parentFocusId: string,
+    clientX?: number,
+    clientY?: number,
+    type: PendingFocusLinkType = 'prerequisite',
+) {
     pendingFocusLinkParentId = parentFocusId;
-    refreshPendingFocusLinkOverlay(clientX, clientY);
+    pendingFocusLinkType = type;
+    const parentElement = getFocusElementById(parentFocusId);
+    const parentCenter = parentElement ? getElementViewportCenter(parentElement) : undefined;
+    refreshPendingFocusLinkOverlay(clientX ?? parentCenter?.x, clientY ?? parentCenter?.y);
     updateFocusPositionEditUi();
 }
 
@@ -572,6 +621,7 @@ function updatePendingFocusLinkTarget(clientX: number, clientY: number) {
 
 function clearPendingFocusLink() {
     pendingFocusLinkParentId = undefined;
+    pendingFocusLinkType = undefined;
     const overlay = document.getElementById('focus-link-overlay') as SVGSVGElement | null;
     if (overlay) {
         overlay.style.display = 'none';
@@ -834,10 +884,24 @@ function updateFocusLinkAfterApply(parentFocusId: string, childFocusId: string, 
         return;
     }
 
-    if (!childFocus.prerequisite.some(group => group.includes(parentFocusId))) {
+    const existingGroupIndex = childFocus.prerequisite.findIndex(group => group.includes(parentFocusId));
+    const hasExistingLink = existingGroupIndex !== -1 || childFocus.relativePositionId === parentFocusId;
+    if (hasExistingLink) {
+        if (existingGroupIndex !== -1) {
+            const updatedGroup = childFocus.prerequisite[existingGroupIndex].filter(focusId => focusId !== parentFocusId);
+            if (updatedGroup.length === 0) {
+                childFocus.prerequisite.splice(existingGroupIndex, 1);
+            } else {
+                childFocus.prerequisite[existingGroupIndex] = updatedGroup;
+            }
+        }
+        if (childFocus.relativePositionId === parentFocusId) {
+            childFocus.relativePositionId = undefined;
+        }
+    } else {
         childFocus.prerequisite.push([parentFocusId]);
+        childFocus.relativePositionId = parentFocusId;
     }
-    childFocus.relativePositionId = parentFocusId;
     if (targetLocalX !== undefined && targetLocalY !== undefined) {
         childFocus.x = targetLocalX;
         childFocus.y = targetLocalY;
@@ -848,6 +912,32 @@ function updateFocusLinkAfterApply(parentFocusId: string, childFocusId: string, 
         getFocusPosition(currentFocus, recalculatedPositions, currentRenderedFocusTree!, currentRenderedExprs);
     });
     setCurrentFocusPositions(recalculatedPositions);
+}
+
+function updateFocusExclusiveLinkAfterApply(sourceFocusId: string, targetFocusId: string) {
+    if (!currentRenderedFocusTree) {
+        return;
+    }
+
+    const sourceFocus = currentRenderedFocusTree.focuses[sourceFocusId];
+    const targetFocus = currentRenderedFocusTree.focuses[targetFocusId];
+    if (!sourceFocus) {
+        return;
+    }
+
+    if (!targetFocus) {
+        return;
+    }
+
+    const hasExistingExclusiveLink = sourceFocus.exclusive.includes(targetFocusId)
+        || targetFocus.exclusive.includes(sourceFocusId);
+    if (hasExistingExclusiveLink) {
+        sourceFocus.exclusive = sourceFocus.exclusive.filter(focusId => focusId !== targetFocusId);
+        targetFocus.exclusive = targetFocus.exclusive.filter(focusId => focusId !== sourceFocusId);
+    } else {
+        sourceFocus.exclusive.push(targetFocusId);
+        targetFocus.exclusive.push(sourceFocusId);
+    }
 }
 
 async function buildContent() {
@@ -903,7 +993,7 @@ async function buildContent() {
         focusGridBoxItems = focuses.map(focus => focusToGridItem(focus, focusTree, fallbackAllowBranchOptionsValue, focusPosition, renderExprs)).filter((v): v is GridBoxItem => !!v);
     }
     currentRenderedFocusTree = focusTree;
-    if (pendingFocusLinkParentId !== undefined && !focusTree.focuses[pendingFocusLinkParentId]) {
+    if (hasPendingFocusLink() && !focusTree.focuses[pendingFocusLinkParentId!]) {
         clearPendingFocusLink();
     }
     setCurrentFocusPositions({ ...focusPosition });
@@ -1298,6 +1388,8 @@ window.addEventListener('load', tryRun(async function() {
             targetLocalY?: number;
             parentFocusId?: string;
             childFocusId?: string;
+            sourceFocusId?: string;
+            targetFocusId?: string;
             focusTrees?: FocusTree[];
             renderedFocus?: Record<string, string>;
             renderedInlayWindows?: Record<string, string>;
@@ -1317,7 +1409,9 @@ window.addEventListener('load', tryRun(async function() {
             return;
         }
 
-        if (message.command !== 'focusPositionEditApplied' && message.command !== 'focusLinkEditApplied') {
+        if (message.command !== 'focusPositionEditApplied'
+            && message.command !== 'focusLinkEditApplied'
+            && message.command !== 'focusExclusiveLinkEditApplied') {
             return;
         }
 
@@ -1337,6 +1431,11 @@ window.addEventListener('load', tryRun(async function() {
                 message.targetLocalX,
                 message.targetLocalY,
             );
+        }
+        if (message.command === 'focusExclusiveLinkEditApplied'
+            && message.sourceFocusId !== undefined
+            && message.targetFocusId !== undefined) {
+            updateFocusExclusiveLinkAfterApply(message.sourceFocusId, message.targetFocusId);
         }
 
         void buildContent().then(() => {

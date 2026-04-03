@@ -16,15 +16,18 @@ interface FocusNodeMeta {
     relativePositionId?: ScalarFieldMeta;
     currentRelativePositionId?: string;
     prerequisiteIds: string[];
-    prerequisiteFields: PrerequisiteFieldMeta[];
+    prerequisiteFields: FocusReferenceFieldMeta[];
+    exclusiveIds: string[];
+    exclusiveFields: FocusReferenceFieldMeta[];
     linkInsertAnchorStart?: number;
     firstOffsetStart?: number;
 }
 
-interface PrerequisiteFieldMeta {
+interface FocusReferenceFieldMeta {
     range: TextRange;
     focusIds: string[];
     hasOrWrapper: boolean;
+    fieldName: string;
 }
 
 export interface FocusPositionTextChange {
@@ -44,6 +47,11 @@ export interface CreateFocusTemplateTextChangeResult {
 }
 
 export interface FocusLinkTextChangeResult {
+    changes?: FocusPositionTextChange[];
+    error?: string;
+}
+
+export interface FocusExclusiveLinkTextChangeResult {
     changes?: FocusPositionTextChange[];
     error?: string;
 }
@@ -229,6 +237,26 @@ export function buildFocusLinkTextChanges(
     const child = matches[0];
     const lineEnding = detectLineEnding(content);
     const changes: FocusPositionTextChange[] = [];
+    const hasExistingPrerequisiteLink = child.prerequisiteIds.includes(parentFocusId);
+    const hasExistingRelativePositionLink = child.currentRelativePositionId === parentFocusId;
+
+    if (hasExistingPrerequisiteLink || hasExistingRelativePositionLink) {
+        if (targetLocalX !== undefined && targetLocalY !== undefined) {
+            ensureScalarField(changes, content, child.sourceRange, child.x, 'x', `${Math.round(targetLocalX)}`, lineEnding, child.firstOffsetStart);
+            ensureScalarField(changes, content, child.sourceRange, child.y, 'y', `${Math.round(targetLocalY)}`, lineEnding, child.firstOffsetStart);
+        }
+        removeNamedFocusReferences(changes, content, child.prerequisiteFields, parentFocusId, lineEnding);
+        if (hasExistingRelativePositionLink && child.relativePositionId) {
+            changes.push({
+                range: expandRangeToWholeLines(content, child.relativePositionId.nodeRange),
+                text: '',
+            });
+        }
+
+        return {
+            changes: dedupeChanges(changes),
+        };
+    }
 
     if (targetLocalX !== undefined && targetLocalY !== undefined) {
         ensureScalarField(changes, content, child.sourceRange, child.x, 'x', `${Math.round(targetLocalX)}`, lineEnding, child.firstOffsetStart);
@@ -250,6 +278,87 @@ export function buildFocusLinkWorkspaceEdit(
     targetLocalY?: number,
 ): { edit?: vscode.WorkspaceEdit; error?: string } {
     const result = buildFocusLinkTextChanges(document.getText(), parentFocusId, childFocusId, targetLocalX, targetLocalY);
+    if (result.error) {
+        return { error: result.error };
+    }
+
+    const changes = result.changes ?? [];
+    if (changes.length === 0) {
+        return {};
+    }
+
+    const edit = new vscode.WorkspaceEdit();
+    for (const change of changes) {
+        edit.replace(
+            document.uri,
+            new vscode.Range(document.positionAt(change.range.start), document.positionAt(change.range.end)),
+            change.text,
+        );
+    }
+
+    return { edit };
+}
+
+export function buildFocusExclusiveLinkTextChanges(
+    content: string,
+    sourceFocusId: string,
+    targetFocusId: string,
+): FocusExclusiveLinkTextChangeResult {
+    if (sourceFocusId === targetFocusId) {
+        return { error: 'A focus cannot be linked to itself.' };
+    }
+
+    const bomOffset = content.startsWith('\uFEFF') ? 1 : 0;
+    const parseContent = bomOffset > 0 ? content.slice(bomOffset) : content;
+    const root = parseHoi4File(parseContent);
+    const editableFocuses = collectEditableFocuses(root)
+        .map(meta => shiftFocusMeta(meta, bomOffset));
+    const sourceMatches = editableFocuses.filter(meta => meta.focusId === sourceFocusId);
+    if (sourceMatches.length === 0) {
+        return { error: `Focus ${sourceFocusId} is not editable in the current file.` };
+    }
+
+    if (sourceMatches.length > 1) {
+        return { error: `Focus ${sourceFocusId} is ambiguous in the current file.` };
+    }
+
+    const targetMatches = editableFocuses.filter(meta => meta.focusId === targetFocusId);
+    if (targetMatches.length === 0) {
+        return { error: `Focus ${targetFocusId} is not editable in the current file.` };
+    }
+
+    if (targetMatches.length > 1) {
+        return { error: `Focus ${targetFocusId} is ambiguous in the current file.` };
+    }
+
+    const source = sourceMatches[0];
+    const target = targetMatches[0];
+    const lineEnding = detectLineEnding(content);
+    const changes: FocusPositionTextChange[] = [];
+    const hasExistingExclusiveLink = source.exclusiveIds.includes(targetFocusId)
+        || target.exclusiveIds.includes(sourceFocusId);
+    if (hasExistingExclusiveLink) {
+        removeNamedFocusReferences(changes, content, source.exclusiveFields, targetFocusId, lineEnding);
+        removeNamedFocusReferences(changes, content, target.exclusiveFields, sourceFocusId, lineEnding);
+        return {
+            changes: dedupeChanges(changes),
+        };
+    }
+
+    ensureExclusiveLink(changes, content, source, targetFocusId, lineEnding);
+    ensureExclusiveLink(changes, content, target, sourceFocusId, lineEnding);
+
+    return {
+        changes: dedupeChanges(changes),
+    };
+}
+
+export function buildFocusExclusiveLinkWorkspaceEdit(
+    document: vscode.TextDocument,
+    sourceFocusId: string,
+    targetFocusId: string,
+): { edit?: vscode.WorkspaceEdit; error?: string } {
+    const result = buildFocusExclusiveLinkTextChanges(document.getText(), sourceFocusId, targetFocusId);
     if (result.error) {
         return { error: result.error };
     }
@@ -476,8 +585,10 @@ function collectFocusMeta(node: Node): FocusNodeMeta | undefined {
         y: collectScalarField(node, 'y'),
         relativePositionId: collectScalarField(node, 'relative_position_id'),
         currentRelativePositionId: readStringChildValue(node, 'relative_position_id'),
-        prerequisiteIds: collectPrerequisiteIds(node),
-        prerequisiteFields: collectPrerequisiteFields(node),
+        prerequisiteIds: collectNamedFocusReferenceIds(node, 'prerequisite'),
+        prerequisiteFields: collectFocusReferenceFields(node, 'prerequisite'),
+        exclusiveIds: collectNamedFocusReferenceIds(node, 'mutually_exclusive'),
+        exclusiveFields: collectFocusReferenceFields(node, 'mutually_exclusive'),
         linkInsertAnchorStart: findLinkInsertAnchorStart(node),
         firstOffsetStart: findFirstOffsetStart(node),
     };
@@ -495,6 +606,10 @@ function shiftFocusMeta(meta: FocusNodeMeta, offset: number): FocusNodeMeta {
         y: meta.y ? shiftScalarField(meta.y, offset) : undefined,
         relativePositionId: meta.relativePositionId ? shiftScalarField(meta.relativePositionId, offset) : undefined,
         prerequisiteFields: meta.prerequisiteFields.map(field => ({
+            ...field,
+            range: shiftRange(field.range, offset),
+        })),
+        exclusiveFields: meta.exclusiveFields.map(field => ({
             ...field,
             range: shiftRange(field.range, offset),
         })),
@@ -617,6 +732,25 @@ function ensureRelativePositionIdLink(
     });
 }
 
+function ensureExclusiveLink(
+    changes: FocusPositionTextChange[],
+    content: string,
+    focus: FocusNodeMeta,
+    targetFocusId: string,
+    lineEnding: string,
+): void {
+    if (focus.exclusiveIds.includes(targetFocusId)) {
+        return;
+    }
+
+    const insertPosition = getLinkInsertPosition(content, focus);
+    const { childIndent } = getBlockIndentation(content, focus.sourceRange);
+    changes.push({
+        range: { start: insertPosition, end: insertPosition },
+        text: `${childIndent}mutually_exclusive = { focus = ${targetFocusId} }${lineEnding}`,
+    });
+}
+
 function removeDeletedFocusReferences(
     changes: FocusPositionTextChange[],
     content: string,
@@ -624,16 +758,8 @@ function removeDeletedFocusReferences(
     deletedFocusId: string,
     lineEnding: string,
 ): void {
-    for (const prerequisiteField of focus.prerequisiteFields.filter(field => field.focusIds.includes(deletedFocusId))) {
-        const remainingIds = prerequisiteField.focusIds.filter(id => id !== deletedFocusId);
-        const range = expandRangeToWholeLines(content, prerequisiteField.range);
-        changes.push({
-            range,
-            text: remainingIds.length === 0
-                ? ''
-                : buildPrerequisiteFieldReplacement(content, prerequisiteField.range, remainingIds, prerequisiteField.hasOrWrapper, lineEnding),
-        });
-    }
+    removeNamedFocusReferences(changes, content, focus.prerequisiteFields, deletedFocusId, lineEnding);
+    removeNamedFocusReferences(changes, content, focus.exclusiveFields, deletedFocusId, lineEnding);
 
     if (focus.currentRelativePositionId === deletedFocusId && focus.relativePositionId) {
         changes.push({
@@ -661,6 +787,25 @@ function dedupeChanges(changes: FocusPositionTextChange[]): FocusPositionTextCha
     }
 
     return Array.from(seen.values()).sort((a, b) => a.range.start - b.range.start || a.range.end - b.range.end);
+}
+
+function removeNamedFocusReferences(
+    changes: FocusPositionTextChange[],
+    content: string,
+    fields: FocusReferenceFieldMeta[],
+    focusId: string,
+    lineEnding: string,
+): void {
+    for (const field of fields.filter(currentField => currentField.focusIds.includes(focusId))) {
+        const remainingIds = field.focusIds.filter(id => id !== focusId);
+        const range = expandRangeToWholeLines(content, field.range);
+        changes.push({
+            range,
+            text: remainingIds.length === 0
+                ? ''
+                : buildFocusReferenceFieldReplacement(content, field.range, field.fieldName, remainingIds, field.hasOrWrapper, lineEnding),
+        });
+    }
 }
 
 function isNamedBlock(expectedName: string) {
@@ -702,25 +847,25 @@ function findLinkInsertAnchorStart(node: Node): number | undefined {
     return anchorNode?.nameToken?.start ?? anchorNode?.valueStartToken?.start ?? undefined;
 }
 
-function collectPrerequisiteIds(node: Node): string[] {
+function collectNamedFocusReferenceIds(node: Node, fieldName: string): string[] {
     if (!Array.isArray(node.value)) {
         return [];
     }
 
     const result = new Set<string>();
     node.value
-        .filter(child => child.name?.toLowerCase() === 'prerequisite')
+        .filter(child => child.name?.toLowerCase() === fieldName)
         .forEach(child => collectFocusReferenceIds(child, result));
     return Array.from(result);
 }
 
-function collectPrerequisiteFields(node: Node): PrerequisiteFieldMeta[] {
+function collectFocusReferenceFields(node: Node, fieldName: string): FocusReferenceFieldMeta[] {
     if (!Array.isArray(node.value)) {
         return [];
     }
 
     return node.value
-        .filter(child => child.name?.toLowerCase() === 'prerequisite')
+        .filter(child => child.name?.toLowerCase() === fieldName)
         .map(child => {
             const focusIds = new Set<string>();
             collectFocusReferenceIds(child, focusIds);
@@ -728,6 +873,7 @@ function collectPrerequisiteFields(node: Node): PrerequisiteFieldMeta[] {
                 range: createNodeRange(child),
                 focusIds: Array.from(focusIds),
                 hasOrWrapper: Array.isArray(child.value) && child.value.some(grandChild => grandChild.name?.toLowerCase() === 'or'),
+                fieldName,
             };
         });
 }
@@ -845,9 +991,10 @@ function inferIndentUnit(content: string, blockIndent: string, blockRange: TextR
     return blockIndent.includes('\t') ? '\t' : '    ';
 }
 
-function buildPrerequisiteFieldReplacement(
+function buildFocusReferenceFieldReplacement(
     content: string,
     fieldRange: TextRange,
+    fieldName: string,
     remainingIds: string[],
     hasOrWrapper: boolean,
     lineEnding: string,
@@ -857,7 +1004,7 @@ function buildPrerequisiteFieldReplacement(
     const childIndent = blockIndent + indentUnit;
     if (hasOrWrapper) {
         const focusIndent = childIndent + indentUnit;
-        return `${blockIndent}prerequisite = {${lineEnding}` +
+        return `${blockIndent}${fieldName} = {${lineEnding}` +
             `${childIndent}OR = {${lineEnding}` +
             remainingIds.map(id => `${focusIndent}focus = ${id}${lineEnding}`).join('') +
             `${childIndent}}${lineEnding}` +
@@ -865,10 +1012,10 @@ function buildPrerequisiteFieldReplacement(
     }
 
     if (remainingIds.length === 1) {
-        return `${blockIndent}prerequisite = { focus = ${remainingIds[0]} }${lineEnding}`;
+        return `${blockIndent}${fieldName} = { focus = ${remainingIds[0]} }${lineEnding}`;
     }
 
-    return `${blockIndent}prerequisite = {${lineEnding}` +
+    return `${blockIndent}${fieldName} = {${lineEnding}` +
         remainingIds.map(id => `${childIndent}focus = ${id}${lineEnding}`).join('') +
         `${blockIndent}}${lineEnding}`;
 }
