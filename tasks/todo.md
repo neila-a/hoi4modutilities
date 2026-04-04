@@ -1,15 +1,15 @@
-# Focus Preview Icon GFX Loading Todo
+# Focus Preview Icon Fallback Parser Error Todo
 
 ## Plan
-- [x] Audit the icon pipeline from `icon = GFX_*` parsing through GFX container discovery and webview class substitution
-- [x] Fix the root cause so focus preview resolves registered GFX icons before falling back to the default icon
+- [x] Audit the new focus icon fallback scan path and confirm why malformed or non-sprite `.gfx` files abort preview loading
+- [x] Make the fallback icon resolver resilient so parse/read failures are skipped instead of breaking the whole preview
 - [x] Record review notes and rerun compile, lint, test, and package
 
 ## Notes
-- Scope is limited to focus preview icon resolution for `icon = GFX_*` entries.
-- The fix should preserve existing fallback behavior for genuinely missing sprites.
+- Scope is limited to the recent focus icon fallback scanner regression.
+- The fix should preserve sprite resolution while treating unreadable or unparsable `.gfx` files as non-matches.
 
 ## Review
-- Root cause was that focus preview icon loading depended too heavily on the optional GFX index and the static `interface/goals.gfx` fallback, so workspace-local mod icons could miss resolution even when their `GFX_*` names existed in other `.gfx` containers.
-- Added a focused fallback resolver that keeps indexed hits, then scans `interface/*.gfx` only for unresolved icon names and feeds the matched container files back into the focus tree loader.
-- Added regression tests for indexed-hit preservation and multi-icon fallback resolution, then verified with `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
+- The new icon fallback path was propagating parse failures from unrelated `interface/*.gfx` files, so one malformed GUI sprite file could abort the whole focus preview load.
+- The fallback resolver now skips files that throw during sprite-name discovery and keeps scanning later `.gfx` files for the unresolved icon names.
+- Added a regression test that simulates a broken `.gfx` file followed by a valid one.

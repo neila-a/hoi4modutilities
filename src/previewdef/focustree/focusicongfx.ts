@@ -33,7 +33,12 @@ export async function resolveFocusIconGfxFiles(
             break;
         }
 
-        const spriteNames = new Set(await resolver.readSpriteNames(gfxFile));
+        let spriteNames: Set<string>;
+        try {
+            spriteNames = new Set(await resolver.readSpriteNames(gfxFile));
+        } catch {
+            continue;
+        }
         let matched = false;
         for (const unresolvedName of Array.from(unresolvedNames)) {
             if (spriteNames.has(unresolvedName)) {

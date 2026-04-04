@@ -49,4 +49,31 @@ describe('focus icon gfx resolver', () => {
 
         assert.deepStrictEqual(result, ['interface/shared.gfx']);
     });
+
+    it('skips unreadable or unparsable gfx files during fallback scanning', async () => {
+        const scannedFiles: string[] = [];
+        const result = await resolveFocusIconGfxFiles(
+            ['GFX_target'],
+            {
+                resolveIndexedFile: async () => undefined,
+                listInterfaceGfxFiles: async () => [
+                    'interface/broken.gfx',
+                    'interface/valid.gfx',
+                ],
+                readSpriteNames: async (gfxFile) => {
+                    scannedFiles.push(gfxFile);
+                    if (gfxFile === 'interface/broken.gfx') {
+                        throw new Error('parse failure');
+                    }
+                    return ['GFX_target'];
+                },
+            },
+        );
+
+        assert.deepStrictEqual(result, ['interface/valid.gfx']);
+        assert.deepStrictEqual(scannedFiles, [
+            'interface/broken.gfx',
+            'interface/valid.gfx',
+        ]);
+    });
 });
