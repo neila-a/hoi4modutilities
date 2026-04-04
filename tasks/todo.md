@@ -1,30 +1,28 @@
-# HOI4 Mod Utilities Continuous Focus Position Edit Todo
+# HOI4 Mod Utilities Focus Preview Structural Lint Todo
 
 ## Plan
-- [x] Inspect the current `continuous_focus_position` parse/render path and reuse the existing focus-edit message flow where possible
-- [x] Extend focustree metadata/types so continuous focus positions keep writable source ranges and tree ownership info
-- [x] Add host-side continuous position writeback helpers for replace-or-insert behavior with BOM-safe ranges
-- [x] Wire a dedicated `applyContinuousFocusPositionEdit` message through the focus preview host and optimistic webview refresh path
-- [x] Add edit-mode drag handling for `#continuousFocuses` without regressing blank-canvas pan, create, marquee, minimap, or relation editing
-- [x] Keep `Jump to continuous` and minimap navigation synchronized with the updated continuous position source of truth
-- [x] Add regression coverage for continuous position text changes and minimap model support
-- [x] Update the existing `0.13.20` release notes for the new continuous edit capability
+- [x] Inspect the current focus warning flow, badge rendering path, and relation/runtime metadata needed for lint aggregation
+- [x] Extend the warning model so parse warnings and structural lint share one typed collection
+- [x] Add a pure `focuslint.ts` helper that computes asymmetric exclusive, relative-position mismatch, missing reference, and unreachable-candidate findings
+- [x] Feed lint results into `getFocusTree(...)` so each tree exposes ordered warnings plus per-focus lint counts/messages
+- [x] Render lint badges and lint summaries in the existing focus status / relation UI without breaking hit targets
+- [x] Restructure the warnings panel output to show `[severity][code][kind][source]` entries with lint findings first
+- [x] Add unit coverage for lint rules and runtime warning ordering/aggregation
 - [x] Run `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`
-- [x] Record review results and verification notes
+- [x] Record review notes, verification results, and any environment-blocked checks
 
 ## Notes
-- Scope for this pass is `continuous_focus_position` editing only; no numeric HUD, reset action, or unrelated parser changes.
-- Continuous position writeback must stay in absolute preview coordinates, not focus grid cell coordinates.
-- Imported/shared/joint trees remain read-only for continuous editing; only the current document's top-level `focus_tree` continuous block is editable.
+- Scope for this pass is structural lint surfacing only; no new host/webview message contracts and no writeback behavior changes.
+- Lint must reuse the existing warnings panel plus node-level badges rather than introducing a new panel or sidebar.
+- `candidate unreachable` remains `info` severity because branch/condition runtime flow is not fully simulated.
 
 ## Review
-- Added continuous-position edit metadata for local `focus_tree` blocks so the host can rewrite existing `continuous_focus_position` coordinates or insert the block later using the same stable tree edit key.
-- Added `buildContinuousFocusPositionTextChanges` and a matching workspace-edit builder that are BOM-safe, reject non-local trees, and support both replace and insert flows inside `focus_tree = {}`.
-- Wired a new `applyContinuousFocusPositionEdit` message through the focus preview host and optimistic webview update path, reusing the existing local-version guard instead of forcing a full preview reload.
-- In `Edit` mode, the `Continuous focuses` helper is now its own draggable target with pointer ownership separated from blank-canvas pan, create, marquee selection, minimap clicks, and relation editing.
-- `Jump to continuous` and the minimap now read from the same continuous-position source of truth, and the minimap renders a dedicated continuous marker in addition to focus points.
-- Added regression coverage in `test/unit/focustree-positionedit.test.ts`, `test/unit/focustree-schema.test.ts`, and `test/unit/focustree-minimap.test.ts` for replace/insert, BOM safety, read-only rejection, metadata capture, and continuous minimap projection.
-- Updated `CHANGELOG.md` within the existing `0.13.20` line to record direct preview editing of `continuous_focus_position`.
+- Generalized `FocusWarning` so parse warnings and structural lint now share one typed collection with `code`, `severity`, `kind`, `relatedFocusIds`, and optional navigations.
+- Added `src/previewdef/focustree/focuslint.ts` as a pure helper that computes asymmetric `mutually_exclusive`, `relative_position_id` without matching prerequisite, missing prerequisite/exclusive targets, and unreachable-candidate findings.
+- Wired lint aggregation into `schema.ts` so every focus tree now carries sorted warnings plus per-focus `lintWarningCount`, `lintInfoCount`, and `lintMessages`.
+- Updated focustree inlay warning producers and loader post-processing so inlay-originated warnings still satisfy the expanded warning contract and the tree warning list stays lint-first after inlay resolution.
+- Added preview lint surfacing in the existing UI: node-level lint pills, lint lines in hover status summaries and relation summaries, and a structured warnings panel with clickable navigation entries.
+- Added `test/unit/focustree-lint.test.ts` covering asymmetric exclusive detection, relative-position mismatch, missing targets, unreachable candidates, imported-target false-positive avoidance, and lint-before-parse ordering.
 - Verification passed: `npm run compile-ts`, `npm run lint`, `npm test`, `npm run package`.
-- Packaged VSIX: `C:\Users\Administrator\Documents\Code\hoi4modutilities\hoi4modutilities-0.13.20.vsix`.
-- Manual VS Code smoke for live dragging of `Continuous focuses` inside the preview was not run in this terminal session.
+- Packaged VSIX: `C:\\Users\\Administrator\\Documents\\Code\\hoi4modutilities\\hoi4modutilities-0.13.20.vsix`.
+- Manual VS Code smoke for lint badge placement, warnings-panel click navigation, and large-tree partial refresh behavior was not run in this terminal session.

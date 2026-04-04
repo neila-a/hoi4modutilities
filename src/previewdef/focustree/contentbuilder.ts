@@ -303,6 +303,38 @@ function normalizeFocusSpacingValue(value: number | undefined, fallback: number)
 
 function renderWarningContainer(styleTable: StyleTable) {
     styleTable.style('warnings', () => 'outline: none;', ':focus');
+    const warningEntryClass = styleTable.style('warnings-entry', () => `
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 4px;
+        width: 100%;
+        padding: 8px 10px;
+        border: 1px solid var(--vscode-panel-border);
+        background: color-mix(in srgb, var(--vscode-editor-background) 92%, var(--vscode-sideBar-background));
+        color: var(--vscode-editor-foreground);
+        text-align: left;
+        font: inherit;
+        cursor: pointer;
+    `);
+    const warningEntryMutedClass = styleTable.style('warnings-entry-muted', () => `
+        cursor: default;
+        opacity: 0.92;
+    `);
+    const warningMetaClass = styleTable.style('warnings-entry-meta', () => `
+        color: var(--vscode-descriptionForeground);
+        font-size: 11px;
+    `);
+    const warningTextClass = styleTable.style('warnings-entry-text', () => `
+        white-space: pre-wrap;
+        line-height: 1.35;
+    `);
+    const warningSeverityWarningClass = styleTable.style('warnings-entry-warning', () => `
+        border-left: 3px solid rgba(210, 140, 38, 0.96);
+    `);
+    const warningSeverityInfoClass = styleTable.style('warnings-entry-info', () => `
+        border-left: 3px solid rgba(92, 138, 184, 0.96);
+    `);
     return `
     <div id="warnings-container" class="${styleTable.style('warnings-container', () => `
         height: 100vh;
@@ -315,18 +347,28 @@ function renderWarningContainer(styleTable: StyleTable) {
         box-sizing: border-box;
         display: none;
     `)}">
-        <textarea id="warnings" readonly wrap="off" class="${styleTable.style('warnings', () => `
+        <div id="warnings" class="${styleTable.style('warnings', () => `
             height: 100%;
             width: 100%;
             font-family: 'Consolas', monospace;
-            resize: none;
             background: var(--vscode-editor-background);
             padding: 10px;
             border-top: none;
             border-left: none;
             border-bottom: none;
             box-sizing: border-box;
-        `)}"></textarea>
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        `)}"></div>
+        <div id="warnings-entry-template" style="display:none"
+            data-warning-entry-class="${warningEntryClass}"
+            data-warning-entry-muted-class="${warningEntryMutedClass}"
+            data-warning-meta-class="${warningMetaClass}"
+            data-warning-text-class="${warningTextClass}"
+            data-warning-warning-class="${warningSeverityWarningClass}"
+            data-warning-info-class="${warningSeverityInfoClass}"></div>
     </div>`;
 }
 
@@ -590,6 +632,44 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
 }
 
 function ensureFocusStatusStyles(styleTable: StyleTable) {
+    styleTable.raw('.focus-lint-badges', `
+        position: absolute;
+        top: 2px;
+        left: 22px;
+        display: flex;
+        gap: 3px;
+        flex-wrap: wrap;
+        max-width: 96px;
+        z-index: 1;
+        pointer-events: none;
+    `);
+    styleTable.raw('.focus-lint-badge', `
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 13px;
+        min-width: 13px;
+        padding: 0 4px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.16);
+        background: rgba(48, 48, 48, 0.82);
+        color: var(--vscode-editor-foreground);
+        font-size: 9px;
+        line-height: 1;
+        white-space: nowrap;
+        box-sizing: border-box;
+        pointer-events: none;
+    `);
+    styleTable.raw('.focus-lint-badge-warning', `
+        background: rgba(198, 120, 28, 0.88);
+        border-color: rgba(198, 120, 28, 1);
+        color: #ffffff;
+    `);
+    styleTable.raw('.focus-lint-badge-info', `
+        background: rgba(78, 98, 120, 0.84);
+        border-color: rgba(108, 128, 150, 1);
+        color: #ffffff;
+    `);
     styleTable.raw('.focus-status-badges', `
         position: absolute;
         top: 2px;
@@ -718,6 +798,7 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     data-focus-editable="${focus.isInCurrentFile && focus.layout?.editable === true ? 'true' : 'false'}"
     data-focus-source-file="${attributeEscape(focus.layout?.sourceFile ?? focus.file)}"
     title="${focus.id}\n({{position}})">
+        {{lintBadges}}
         {{statusBadges}}
         {{statusSummary}}
         <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">

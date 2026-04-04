@@ -830,6 +830,24 @@ function getRelationSummaryAnchorFocusId(activeFocusIds: readonly string[]): str
     return hoveredRelationFocusId;
 }
 
+function getRelationLintSummaryLine(focusTree: FocusTree, activeFocusIds: readonly string[]): string | undefined {
+    const lintMessages = Array.from(new Set(
+        activeFocusIds
+            .map(focusId => focusTree.focuses[focusId]?.lintMessages ?? [])
+            .flat(),
+    ));
+
+    if (lintMessages.length === 0) {
+        return undefined;
+    }
+
+    const summary = lintMessages.slice(0, 2).join('; ');
+    const suffix = lintMessages.length > 2
+        ? feLocalize('TODO', ' (+{0} more)', lintMessages.length - 2)
+        : '';
+    return feLocalize('TODO', 'Lint: {0}{1}', summary, suffix);
+}
+
 function updateFocusRelationSummaryOverlay(activeFocusIds: readonly string[]) {
     if (!currentRenderedFocusTree || activeFocusIds.length === 0) {
         hideFocusRelationSummaryOverlay();
@@ -862,6 +880,10 @@ function updateFocusRelationSummaryOverlay(activeFocusIds: readonly string[]) {
     ];
     if (relationState.hasGroupedPrerequisite) {
         lines.push(feLocalize('TODO', 'Dashed lines indicate grouped prerequisites.'));
+    }
+    const lintLine = getRelationLintSummaryLine(currentRenderedFocusTree, activeFocusIds);
+    if (lintLine) {
+        lines.push(lintLine);
     }
 
     overlay.textContent = lines.join('\n');
@@ -2360,6 +2382,7 @@ async function buildContent() {
             renderedFocus[item.id]
                 .replace('{{position}}', item.gridX + ', ' + item.gridY)
                 .replace('{{iconClass}}', getFocusIcon(focusTree.focuses[item.id], renderExprs, styleTable))
+                .replace('{{lintBadges}}', renderFocusLintBadges(focusTree.focuses[item.id]))
                 .replace('{{statusBadges}}', renderFocusStatusBadges(focusTree.focuses[item.id], renderExprs))
                 .replace('{{statusSummary}}', renderFocusStatusSummary(focusTree.focuses[item.id], renderExprs))
             ),
@@ -2475,11 +2498,113 @@ function updateSelectedFocusTree(clearCondition: boolean) {
         inlayWindows?.selectedValues$.next(selectedInlayWindowId ? [selectedInlayWindowId] : []);
     }
 
-    const warnings = document.getElementById('warnings') as HTMLTextAreaElement | null;
-    if (warnings) {
-        warnings.value = focusTree.warnings.length === 0 ? 'No warnings.' :
-            focusTree.warnings.map(w => `[${w.source}] ${w.text}`).join('\n');
+    renderWarningsPanel(focusTree);
+}
+
+function getWarningPanelClassNames() {
+    const template = document.getElementById('warnings-entry-template') as HTMLDivElement | null;
+    return {
+        entry: template?.dataset.warningEntryClass ?? '',
+        entryMuted: template?.dataset.warningEntryMutedClass ?? '',
+        meta: template?.dataset.warningMetaClass ?? '',
+        text: template?.dataset.warningTextClass ?? '',
+        warning: template?.dataset.warningWarningClass ?? '',
+        info: template?.dataset.warningInfoClass ?? '',
+    };
+}
+
+function formatStructuredWarning(warning: FocusTree['warnings'][number]): string {
+    return `[${warning.severity}][${warning.code}][${warning.kind}][${warning.source}] ${warning.text}`;
+}
+
+function renderWarningsPanel(focusTree: FocusTree) {
+    const warningsElement = document.getElementById('warnings') as HTMLDivElement | null;
+    if (!warningsElement) {
+        return;
     }
+
+    if (focusTree.warnings.length === 0) {
+        warningsElement.innerHTML = `<div>${escapeHtml(feLocalize('TODO', 'No warnings.'))}</div>`;
+        return;
+    }
+
+    const classes = getWarningPanelClassNames();
+    warningsElement.innerHTML = focusTree.warnings.map((warning, index) => {
+        const hasNavigation = !!warning.navigations?.length;
+        const severityClass = warning.severity === 'warning' ? classes.warning : classes.info;
+        const entryClass = [classes.entry, severityClass, hasNavigation ? '' : classes.entryMuted].filter(Boolean).join(' ');
+        const navigationText = warning.navigations?.length
+            ? feLocalize('TODO', 'Navigate')
+            : feLocalize('TODO', 'No navigation');
+        return `<button
+            type="button"
+            class="${entryClass}"
+            data-warning-index="${index}"
+            ${hasNavigation ? '' : 'disabled'}
+            title="${escapeHtml(formatStructuredWarning(warning))}">
+                <span class="${classes.meta}">${escapeHtml(`[${warning.severity}][${warning.code}][${warning.kind}][${warning.source}]`)}</span>
+                <span class="${classes.text}">${escapeHtml(warning.text)}</span>
+                <span class="${classes.meta}">${escapeHtml(navigationText)}</span>
+            </button>`;
+    }).join('');
+
+    warningsElement.querySelectorAll<HTMLButtonElement>('[data-warning-index]').forEach(button => {
+        button.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+            const index = Number(button.dataset.warningIndex ?? '-1');
+            const warning = focusTree.warnings[index];
+            const navigation = warning?.navigations?.[0];
+            if (!warning || !navigation) {
+                return;
+            }
+
+            vscode.postMessage({
+                command: 'navigate',
+                start: navigation.start,
+                end: navigation.end,
+                file: navigation.file,
+            });
+        });
+    });
+}
+
+function renderFocusLintBadge(kind: 'warning' | 'info', label: string, title: string): string {
+    return `<span class="focus-lint-badge focus-lint-badge-${kind}" title="${escapeHtml(title)}">${escapeHtml(label)}</span>`;
+}
+
+function renderFocusLintBadges(focus: Focus): string {
+    const badges: string[] = [];
+    if (focus.lintWarningCount > 0) {
+        badges.push(renderFocusLintBadge(
+            'warning',
+            `!${focus.lintWarningCount}`,
+            feLocalize('TODO', 'Structural warnings: {0}', focus.lintWarningCount),
+        ));
+    }
+    if (focus.lintInfoCount > 0) {
+        badges.push(renderFocusLintBadge(
+            'info',
+            `i${focus.lintInfoCount}`,
+            feLocalize('TODO', 'Structural info findings: {0}', focus.lintInfoCount),
+        ));
+    }
+
+    return badges.length > 0
+        ? `<div class="focus-lint-badges" aria-hidden="true">${badges.join('')}</div>`
+        : '';
+}
+
+function getFocusLintSummaryLine(focus: Focus): string | undefined {
+    if (!focus.lintMessages || focus.lintMessages.length === 0) {
+        return undefined;
+    }
+
+    const summary = focus.lintMessages.slice(0, 2).join('; ');
+    const suffix = focus.lintMessages.length > 2
+        ? feLocalize('TODO', ' (+{0} more)', focus.lintMessages.length - 2)
+        : '';
+    return feLocalize('TODO', 'Lint: {0}{1}', summary, suffix);
 }
 
 function renderFocusStatusBadge(kind: string, label: string, title: string): string {
@@ -2549,6 +2674,10 @@ function renderFocusStatusSummary(focus: Focus, exprs: ConditionItem[]): string 
     }
     if (status.hasCompletionReward) {
         lines.push(feLocalize('TODO', 'Completion reward: yes'));
+    }
+    const lintLine = getFocusLintSummaryLine(focus);
+    if (lintLine) {
+        lines.push(lintLine);
     }
 
     if (lines.length === 0) {

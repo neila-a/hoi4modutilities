@@ -11,6 +11,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 * Add focused prerequisite and mutually exclusive relation visualization to Focus Preview, with hover or selection emphasis and node-adjacent summaries for large trees.
 * Add a fixed Focus Preview minimap for large trees, including viewport tracking, click or drag jump navigation, search-result dots, and quick jumps to the selected or continuous focus area.
 * Add `Edit`-mode dragging for the `Continuous focuses` helper so `continuous_focus_position` can be moved directly from the Focus Preview and written back into the current `focus_tree`.
+* Add structural Focus Preview linting for asymmetric `mutually_exclusive`, `relative_position_id` without matching prerequisites, missing relation targets, and candidate unreachable focuses, surfaced through node badges and the existing warnings panel.
 
 ### Fixed
 * Tighten RGB picker range discovery to parsed HOI4 `color` and `color_ui` nodes, preventing the editor from showing color-picker decorations on stray color-like text in supported definition files.
