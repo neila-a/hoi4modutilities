@@ -1322,8 +1322,12 @@ function hasRenderedFocusAtAbsolutePosition(position: NumberPosition): boolean {
 }
 
 function setupFocusTemplateCreateHandler() {
-    document.addEventListener('dblclick', event => {
+    document.addEventListener('click', event => {
         if (!focusPositionEditMode || !currentRenderedFocusTree) {
+            return;
+        }
+
+        if (event.detail < 2) {
             return;
         }
 
@@ -1338,6 +1342,7 @@ function setupFocusTemplateCreateHandler() {
 
         event.preventDefault();
         event.stopPropagation();
+        clearPendingFocusNavigate();
 
         vscode.postMessage({
             command: 'createFocusTemplateAtPosition',

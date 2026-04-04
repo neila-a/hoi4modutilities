@@ -1,15 +1,14 @@
-# Focus Preview Multi Delete Todo
+# Focus Preview Double Click Create Delay Todo
 
 ## Plan
-- [x] Audit the current single-focus delete path in the webview context menu and host writeback service
-- [x] Extend delete so a context-menu delete on a selected focus removes the whole multi-selection in one operation
+- [x] Audit the blank-space double-click create path and reduce the perceived delay without breaking other click flows
 - [x] Record review notes and rerun compile, lint, test, and package
 
 ## Notes
-- Scope is limited to delete behavior for already selected focuses.
-- Single-focus delete and dependency cleanup should continue to work unchanged.
+- Scope is limited to blank-space focus template creation timing in Edit mode.
+- Focus double-click relation linking and single-click navigation should keep their current behavior.
 
 ## Review
-- The webview context menu now expands `Delete focus` to the full selected set when the clicked focus is already part of a multi-selection.
-- Host/writeback delete handling now accepts multiple focus ids and removes their blocks plus dependent prerequisite, mutually exclusive, and `relative_position_id` references in one grouped edit.
-- Added a regression test for deleting two selected focuses at once while preserving the remaining child focus body.
+- Moved blank-space focus creation from the browser `dblclick` event to the second `click` (`event.detail >= 2`) so the action triggers as soon as the second click lands.
+- Kept the scope narrow: focus double-click linking and delayed single-click navigation remain on their existing paths.
+- Verified with `npm run compile-ts`, `npm run lint`, `npm test`, and `npm run package`.
