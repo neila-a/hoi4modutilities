@@ -459,34 +459,46 @@ export function buildFocusExclusiveLinkWorkspaceEdit(
 
 export function buildDeleteFocusTextChanges(
     content: string,
-    focusId: string,
+    focusIdOrFocusIds: string | readonly string[],
 ): FocusDeleteTextChangeResult {
     const bomOffset = content.startsWith('\uFEFF') ? 1 : 0;
     const parseContent = bomOffset > 0 ? content.slice(bomOffset) : content;
     const root = parseHoi4File(parseContent);
     const editableFocuses = collectEditableFocuses(root).map(meta => shiftFocusMeta(meta, bomOffset));
-    const matches = editableFocuses.filter(meta => meta.focusId === focusId);
-    if (matches.length === 0) {
-        return { error: `Focus ${focusId} is not editable in the current file.` };
+    const deletedFocusIds = Array.from(new Set(
+        (Array.isArray(focusIdOrFocusIds) ? focusIdOrFocusIds : [focusIdOrFocusIds]).filter(Boolean),
+    ));
+    if (deletedFocusIds.length === 0) {
+        return {};
     }
 
-    if (matches.length > 1) {
-        return { error: `Focus ${focusId} is ambiguous in the current file.` };
+    const deletedFocuses: FocusNodeMeta[] = [];
+    for (const focusId of deletedFocusIds) {
+        const matches = editableFocuses.filter(meta => meta.focusId === focusId);
+        if (matches.length === 0) {
+            return { error: `Focus ${focusId} is not editable in the current file.` };
+        }
+
+        if (matches.length > 1) {
+            return { error: `Focus ${focusId} is ambiguous in the current file.` };
+        }
+
+        deletedFocuses.push(matches[0]);
     }
 
-    const deletedFocus = matches[0];
+    const deletedFocusIdSet = new Set(deletedFocusIds);
     const lineEnding = detectLineEnding(content);
-    const changes: FocusPositionTextChange[] = [{
+    const changes: FocusPositionTextChange[] = deletedFocuses.map(deletedFocus => ({
         range: expandRangeToWholeLines(content, deletedFocus.sourceRange, true),
         text: '',
-    }];
+    }));
 
     for (const focus of editableFocuses) {
-        if (focus.focusId === focusId) {
+        if (deletedFocusIdSet.has(focus.focusId)) {
             continue;
         }
 
-        removeDeletedFocusReferences(changes, content, focus, focusId, lineEnding);
+        removeDeletedFocusReferences(changes, content, focus, deletedFocusIdSet, lineEnding);
     }
 
     return {
@@ -496,9 +508,9 @@ export function buildDeleteFocusTextChanges(
 
 export function buildDeleteFocusWorkspaceEdit(
     document: vscode.TextDocument,
-    focusId: string,
+    focusIdOrFocusIds: string | readonly string[],
 ): { edit?: vscode.WorkspaceEdit; error?: string } {
-    const result = buildDeleteFocusTextChanges(document.getText(), focusId);
+    const result = buildDeleteFocusTextChanges(document.getText(), focusIdOrFocusIds);
     if (result.error) {
         return { error: result.error };
     }
@@ -902,13 +914,16 @@ function removeDeletedFocusReferences(
     changes: FocusPositionTextChange[],
     content: string,
     focus: FocusNodeMeta,
-    deletedFocusId: string,
+    deletedFocusIds: string | ReadonlySet<string>,
     lineEnding: string,
 ): void {
-    removeNamedFocusReferences(changes, content, focus.prerequisiteFields, deletedFocusId, lineEnding);
-    removeNamedFocusReferences(changes, content, focus.exclusiveFields, deletedFocusId, lineEnding);
+    const deletedFocusIdSet = typeof deletedFocusIds === 'string'
+        ? new Set([deletedFocusIds])
+        : deletedFocusIds;
+    removeNamedFocusReferencesForSet(changes, content, focus.prerequisiteFields, deletedFocusIdSet, lineEnding);
+    removeNamedFocusReferencesForSet(changes, content, focus.exclusiveFields, deletedFocusIdSet, lineEnding);
 
-    if (focus.currentRelativePositionId === deletedFocusId && focus.relativePositionId) {
+    if (focus.currentRelativePositionId && deletedFocusIdSet.has(focus.currentRelativePositionId) && focus.relativePositionId) {
         changes.push({
             range: expandRangeToWholeLines(content, focus.relativePositionId.nodeRange),
             text: '',
@@ -943,8 +958,18 @@ function removeNamedFocusReferences(
     focusId: string,
     lineEnding: string,
 ): void {
-    for (const field of fields.filter(currentField => currentField.focusIds.includes(focusId))) {
-        const remainingIds = field.focusIds.filter(id => id !== focusId);
+    removeNamedFocusReferencesForSet(changes, content, fields, new Set([focusId]), lineEnding);
+}
+
+function removeNamedFocusReferencesForSet(
+    changes: FocusPositionTextChange[],
+    content: string,
+    fields: FocusReferenceFieldMeta[],
+    focusIds: ReadonlySet<string>,
+    lineEnding: string,
+): void {
+    for (const field of fields.filter(currentField => currentField.focusIds.some(id => focusIds.has(id)))) {
+        const remainingIds = field.focusIds.filter(id => !focusIds.has(id));
         const range = expandRangeToWholeLines(content, field.range);
         changes.push({
             range,

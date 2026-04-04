@@ -100,6 +100,7 @@ export interface ApplyContinuousFocusPositionEditMessage {
 export interface DeleteFocusMessage {
     command: 'deleteFocus';
     focusId: string;
+    focusIds?: string[];
     documentVersion: number;
 }
 

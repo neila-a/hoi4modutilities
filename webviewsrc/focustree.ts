@@ -493,10 +493,6 @@ function updateFocusPositionEditUi() {
                 : '0 0 0 2px rgba(255, 196, 64, 0.95) inset'
             : isSelected
                 ? '0 0 0 2px rgba(96, 196, 255, 0.95) inset'
-            : isHovered
-                ? '0 0 0 2px rgba(255, 208, 96, 0.95) inset'
-            : isHoverRelated
-                ? '0 0 0 2px rgba(255, 208, 96, 0.52) inset'
             : focusPositionEditMode && editable
                 ? '0 0 0 1px rgba(32, 124, 229, 0.85) inset'
                 : '';
@@ -730,9 +726,11 @@ function ensureFocusContextMenu(): HTMLDivElement {
         startPendingFocusLink(focusId, undefined, undefined, 'exclusive');
     });
     const deleteItem = createMenuButton('Delete focus', focusId => {
+        const focusIds = resolveFocusDeleteTargetIds(focusId);
         vscode.postMessage({
             command: 'deleteFocus',
             focusId,
+            focusIds,
             documentVersion: focusPositionDocumentVersion,
         });
     });
@@ -1173,6 +1171,14 @@ function startPendingFocusLink(
 }
 
 function resolvePendingFocusLinkParentIds(anchorFocusId: string): string[] {
+    const selectedFocusIds = currentSelectedFocusIds.has(anchorFocusId)
+        ? Array.from(currentSelectedFocusIds)
+        : [];
+    const focusIds = selectedFocusIds.length > 1 ? selectedFocusIds : [anchorFocusId];
+    return Array.from(new Set(focusIds.filter(Boolean)));
+}
+
+function resolveFocusDeleteTargetIds(anchorFocusId: string): string[] {
     const selectedFocusIds = currentSelectedFocusIds.has(anchorFocusId)
         ? Array.from(currentSelectedFocusIds)
         : [];

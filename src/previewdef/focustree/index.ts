@@ -315,7 +315,8 @@ export class FocusTreePreview extends PreviewBase {
         }
 
         if (msg.command === 'deleteFocus') {
-            const { edit, error } = buildDeleteFocusWorkspaceEdit(document, msg.focusId);
+            const focusIds = msg.focusIds && msg.focusIds.length > 0 ? msg.focusIds : [msg.focusId];
+            const { edit, error } = buildDeleteFocusWorkspaceEdit(document, focusIds);
             if (error) {
                 await vscode.window.showErrorMessage(error);
                 return true;

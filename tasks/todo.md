@@ -1,15 +1,15 @@
-# Focus Preview Icon Fallback Parser Error Todo
+# Focus Preview Multi Delete Todo
 
 ## Plan
-- [x] Audit the new focus icon fallback scan path and confirm why malformed or non-sprite `.gfx` files abort preview loading
-- [x] Make the fallback icon resolver resilient so parse/read failures are skipped instead of breaking the whole preview
+- [x] Audit the current single-focus delete path in the webview context menu and host writeback service
+- [x] Extend delete so a context-menu delete on a selected focus removes the whole multi-selection in one operation
 - [x] Record review notes and rerun compile, lint, test, and package
 
 ## Notes
-- Scope is limited to the recent focus icon fallback scanner regression.
-- The fix should preserve sprite resolution while treating unreadable or unparsable `.gfx` files as non-matches.
+- Scope is limited to delete behavior for already selected focuses.
+- Single-focus delete and dependency cleanup should continue to work unchanged.
 
 ## Review
-- The new icon fallback path was propagating parse failures from unrelated `interface/*.gfx` files, so one malformed GUI sprite file could abort the whole focus preview load.
-- The fallback resolver now skips files that throw during sprite-name discovery and keeps scanning later `.gfx` files for the unresolved icon names.
-- Added a regression test that simulates a broken `.gfx` file followed by a valid one.
+- The webview context menu now expands `Delete focus` to the full selected set when the clicked focus is already part of a multi-selection.
+- Host/writeback delete handling now accepts multiple focus ids and removes their blocks plus dependent prerequisite, mutually exclusive, and `relative_position_id` references in one grouped edit.
+- Added a regression test for deleting two selected focuses at once while preserving the remaining child focus body.
