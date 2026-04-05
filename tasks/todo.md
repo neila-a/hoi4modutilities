@@ -1,3 +1,25 @@
+# Focus Preview Icon Clipping Fix 2026-04-05
+
+## Plan
+- [x] Reproduce the focus preview icon clipping path and pinpoint the HTML/CSS that crops oversized icons
+- [x] Implement the smallest safe focus preview rendering change so large icons stay fully visible without regressing normal icons
+- [x] Run targeted verification and capture review notes with any environment-blocked checks
+
+## Notes
+- Scope is limited to the focus preview icon rendering path where large focus icons are cut off in the webview.
+- Prefer a focused webview/contentbuilder fix over broader preview rewrites unless the root cause proves otherwise.
+
+## Review
+- Root cause was the focus icon being painted directly as the focus node background with its natural pixel width, so oversized sprites were clipped by the fixed focus-card box instead of being scaled down.
+- `src/previewdef/focustree/contentbuilder.ts` now computes a bounded icon area from the current focus slot size, renders icons in a dedicated centered child layer, and preserves aspect ratio by shrinking only icons that exceed the slot bounds.
+- Added `src/previewdef/focustree/focusiconlayout.ts` with a pure helper for bounded proportional scaling, plus `test/unit/focustree-focusiconlayout.test.ts` covering already-fitting, oversized square, and wide-icon cases.
+- Verification:
+  - `npm run compile-ts` passed.
+  - Targeted runtime assertions for `fitFocusIconToBounds` passed via `node -e`.
+  - `npm run package` passed and produced `hoi4modutilities-0.13.21.vsix`.
+  - `npm run test-ui` rebuilt successfully through `compile-ts` and `webpack`, then hit the pre-existing local `spawn EPERM` while launching `@vscode/test-electron`.
+  - `npm run test` is currently blocked by a pre-existing unrelated module-resolution failure in `out/test/unit/country-color-provider-shared.test.js` loading `../hoiformat/hoiparser` from `out/src/util/countryColorProviderShared.js`.
+
 # Non-Focus Preview P3 Fix 2026-04-05
 
 ## Plan

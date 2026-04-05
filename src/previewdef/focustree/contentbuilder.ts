@@ -17,9 +17,15 @@ import { ParentInfo, calculateBBox } from '../../util/hoi4gui/common';
 import { RenderChildTypeMap, RenderContainerWindowOptions, renderContainerWindow } from '../../util/hoi4gui/containerwindow';
 import { renderSprite } from '../../util/hoi4gui/nodecommon';
 import { renderInstantTextBox } from '../../util/hoi4gui/instanttextbox';
+import { fitFocusIconToBounds } from './focusiconlayout';
 
 const defaultFocusIcon = 'gfx/interface/goals/goal_unknown.dds';
 const focusToolbarHeight = 68;
+const focusIconSidePadding = 12;
+const focusIconTopOffset = 10;
+const focusTextMarginTop = 85;
+const focusIconBottomGap = 4;
+const focusDefaultPlaceholderSize = 56;
 
 export interface FocusTreeRenderPayload {
     focusTrees: FocusTree[];
@@ -107,7 +113,14 @@ export async function buildFocusTreeRenderPayload(
 
     const renderedFocus: Record<string, string> = {};
     await Promise.all(allFocuses.map(async (focus) => {
-        renderedFocus[focus.id] = (await renderFocus(focus, styleTable, loadResult.result.gfxFiles, loader.file)).replace(/\s\s+/g, ' ');
+        renderedFocus[focus.id] = (await renderFocus(
+            focus,
+            styleTable,
+            loadResult.result.gfxFiles,
+            loader.file,
+            xGridSize,
+            yGridSize,
+        )).replace(/\s\s+/g, ' ');
     }));
 
     await prepareInlayGfxStyles(focusTrees, styleTable);
@@ -534,17 +547,37 @@ async function renderInlayOverrideChild<T extends keyof RenderChildTypeMap>(
         </div>`;
 }
 
-async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: string[], file: string): Promise<string> {
+async function renderFocus(
+    focus: Focus,
+    styleTable: StyleTable,
+    gfxFiles: string[],
+    file: string,
+    xGridSize: number,
+    yGridSize: number,
+): Promise<string> {
+    const maxFocusIconWidth = Math.max(xGridSize - (focusIconSidePadding * 2), 0);
+    const maxFocusIconHeight = Math.max(focusTextMarginTop - focusIconTopOffset - focusIconBottomGap, 0);
+    const focusPlaceholderSize = Math.max(1, Math.min(focusDefaultPlaceholderSize, maxFocusIconWidth, maxFocusIconHeight));
+
     for (const focusIcon of focus.icon) {
         const iconName = focusIcon.icon;
         const iconObject = iconName ? await getFocusIcon(iconName, gfxFiles) : null;
-        styleTable.style('focus-icon-' + normalizeForStyle(iconName ?? '-empty'), () =>
-            `${iconObject ? `background-image: url(${iconObject.uri});` : 'background: grey;'}
-            background-size: ${iconObject ? iconObject.width : 0}px;`
-        );
+        const displaySize = iconObject
+            ? fitFocusIconToBounds(iconObject.width, iconObject.height, maxFocusIconWidth, maxFocusIconHeight)
+            : { width: focusPlaceholderSize, height: focusPlaceholderSize };
+
+        styleTable.style('focus-icon-' + normalizeForStyle(iconName ?? '-empty'), () => `
+            width: ${displaySize.width}px;
+            height: ${displaySize.height}px;
+            ${iconObject ? `background-image: url(${iconObject.uri});` : 'background: grey;'}
+        `);
     }
 
-    styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => 'background: grey;');
+    styleTable.style('focus-icon-' + normalizeForStyle('-empty'), () => `
+        width: ${focusPlaceholderSize}px;
+        height: ${focusPlaceholderSize}px;
+        background: grey;
+    `);
 
     let textContent = focus.id;
     if (localisationIndex) {
@@ -564,11 +597,7 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
     return `<div
     class="
         navigator
-        {{iconClass}}
         ${styleTable.style('focus-common', () => `
-            background-position-x: center;
-            background-position-y: calc(50% - 18px);
-            background-repeat: no-repeat;
             width: 100%;
             height: 100%;
             text-align: center;
@@ -586,10 +615,35 @@ async function renderFocus(focus: Focus, styleTable: StyleTable, gfxFiles: strin
         <div class="focus-checkbox ${styleTable.style('focus-checkbox', () => `position: absolute; top: 1px;`)}">
             <input id="checkbox-${normalizeForStyle(focus.id)}" type="checkbox"/>
         </div>
+        <div
+        class="${styleTable.style('focus-icon-slot', () => `
+            position: absolute;
+            left: ${focusIconSidePadding}px;
+            top: ${focusIconTopOffset}px;
+            width: ${maxFocusIconWidth}px;
+            height: ${maxFocusIconHeight}px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            pointer-events: none;
+        `)}">
+            <div
+            class="
+                {{iconClass}}
+                ${styleTable.style('focus-icon-image', () => `
+                    display: block;
+                    flex: none;
+                    background-repeat: no-repeat;
+                    background-position: center;
+                    background-size: 100% 100%;
+                    pointer-events: none;
+                `)}
+            "></div>
+        </div>
         <span
         class="${styleTable.style('focus-span', () => `
             margin: 10px -400px;
-            margin-top: 85px;
+            margin-top: ${focusTextMarginTop}px;
             text-align: center;
             display: inline-block;
         `)}">
